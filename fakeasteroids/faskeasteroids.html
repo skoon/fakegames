@@ -53,14 +53,25 @@
 
       // --- Game Constants ---
       const FPS = 60;
+      const INV_FPS = 1 / FPS; // Inverse FPS for multiplication
       const SHIP_SIZE = 20;
-      const TURN_SPEED = 360; // Degrees per second
+      const TURN_SPEED = 180; // Degrees per second
+      const TURN_RATE = (TURN_SPEED / 180) * Math.PI * INV_FPS; // Pre-computed turn rate
       const THRUST = 5; // Acceleration
       const FRICTION = 0.7; // 0 = no friction, 1 = lots
       const ROIDS_NUM = 5; // Starting number of asteroids
       const ROIDS_SIZE = 50; // Starting size
+      const MIN_ROID_SIZE = Math.ceil(ROIDS_SIZE / 4); // Min size before splitting stops
       const ROIDS_SPD = 50; // Max speed pixels per second
       const BULLET_SPD = 5; // pixels per frame
+      const SHIP_LW = SHIP_SIZE / 15; // Ship line width
+      const THRUST_LW = SHIP_SIZE / 10; // Thrust line width
+      const ROID_LW = SHIP_SIZE / 20; // Asteroid line width
+      // UFO Constants
+      const UFO_SIZE = 20;
+      const UFO_SPEED = 3; // pixels per frame
+      const UFO_POINTS = 250;
+
       // Particle constants
       const PARTICLE_NUM = 18;
       const PARTICLE_SPD = 8;
@@ -74,12 +85,21 @@
       let asteroids = [];
       let bullets = [];
       let particles = []; // Array to hold explosion particles
+      let ufo = {
+        x: 0,
+        y: 0,
+        xv: 0,
+        active: false,
+        timer: 0, // Frames until next UFO
+      };
 
       // --- Audio System ---
       let audioCtx = null;
       let musicRunning = false;
       let musicNote = 0;
       let musicTempo = 1.0; // Seconds between beats
+      let ufoOsc = null;
+      let ufoGain = null;
 
       function initAudio() {
         if (audioCtx) {
@@ -217,6 +237,48 @@
         if (musicTempo < 0.2) musicTempo = 0.2;
       }
 
+      function startUfoSound() {
+        if (!audioCtx || ufoOsc) return;
+        ufoOsc = audioCtx.createOscillator();
+        ufoGain = audioCtx.createGain();
+        ufoOsc.type = "triangle";
+        ufoOsc.frequency.setValueAtTime(200, audioCtx.currentTime);
+        ufoOsc.frequency.linearRampToValueAtTime(
+          1000,
+          audioCtx.currentTime + 1
+        ); // Rising siren
+
+        // Loop the siren effect manually or use LFO. For retro style, simple loop is okay-ish,
+        // but let's use an LFO for better siren effect.
+        const lfo = audioCtx.createOscillator();
+        lfo.type = "sawtooth";
+        lfo.frequency.value = 8; // 8 Hz wobble
+        const lfoGain = audioCtx.createGain();
+        lfoGain.gain.value = 50;
+        lfo.connect(lfoGain);
+        lfoGain.connect(ufoOsc.frequency);
+        lfo.start();
+
+        ufoGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        ufoOsc.connect(ufoGain);
+        ufoGain.connect(audioCtx.destination);
+        ufoOsc.start();
+        ufoOsc.lfo = lfo; // Attach lfo to stop it later
+      }
+
+      function stopUfoSound() {
+        if (ufoOsc) {
+          ufoOsc.stop();
+          ufoOsc.disconnect();
+          if (ufoOsc.lfo) ufoOsc.lfo.stop();
+          ufoOsc = null;
+        }
+        if (ufoGain) {
+          ufoGain.disconnect();
+          ufoGain = null;
+        }
+      }
+
       // Ship Object
       const ship = {
         x: canvas.width / 2,
@@ -227,7 +289,6 @@
         thrusting: false,
         thrust: { x: 0, y: 0 },
         blinkNum: 0,
-        blinkTime: 0,
         explodeTime: 0, // Added for the 'exploding' check in ship drawing
       };
 
@@ -249,10 +310,10 @@
             shoot();
             break;
           case "ArrowLeft":
-            ship.rot = ((TURN_SPEED / 180) * Math.PI) / FPS;
+            ship.rot = TURN_RATE;
             break;
           case "ArrowRight":
-            ship.rot = ((-TURN_SPEED / 180) * Math.PI) / FPS;
+            ship.rot = -TURN_RATE;
             break;
           case "ArrowUp":
             ship.thrusting = true;
@@ -299,8 +360,75 @@
         asteroids.push(roid);
       }
 
-      function distBetweenPoints(x1, y1, x2, y2) {
-        return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+      function handleAsteroidCollisions() {
+        for (let i = 0; i < asteroids.length; i++) {
+          let a1 = asteroids[i];
+          for (let j = i + 1; j < asteroids.length; j++) {
+            let a2 = asteroids[j];
+            let d2 = distSquared(a1.x, a1.y, a2.x, a2.y);
+            let rSum = a1.r + a2.r;
+
+            if (d2 < rSum * rSum) {
+              let dist = Math.sqrt(d2);
+              if (dist === 0) dist = 0.01;
+
+              let nx = (a2.x - a1.x) / dist;
+              let ny = (a2.y - a1.y) / dist;
+
+              // Relative velocity
+              let dvx = a2.xv - a1.xv;
+              let dvy = a2.yv - a1.yv;
+              let vDotN = dvx * nx + dvy * ny;
+
+              // If separating, skip
+              if (vDotN > 0) continue;
+
+              // Elastic collision (mass approx = radius)
+              let m1 = a1.r;
+              let m2 = a2.r;
+              let impulse = -(2 * vDotN) / (1 / m1 + 1 / m2);
+
+              // Apply impulse
+              let ix = impulse * nx;
+              let iy = impulse * ny;
+              a1.xv -= ix / m1;
+              a1.yv -= iy / m1;
+              a2.xv += ix / m2;
+              a2.yv += iy / m2;
+
+              // Separation to prevent sticking
+              let overlap = rSum - dist;
+              let totalMassInv = 1 / m1 + 1 / m2;
+              let correction = overlap / totalMassInv;
+              let cx = correction * nx;
+              let cy = correction * ny;
+
+              a1.x -= (cx / m1) * 0.5;
+              a1.y -= (cy / m1) * 0.5;
+              a2.x += (cx / m2) * 0.5;
+              a2.y += (cy / m2) * 0.5;
+            }
+          }
+        }
+      }
+
+      function spawnUfo() {
+        if (gameOver) return;
+        ufo.active = true;
+        ufo.y = Math.random() * (canvas.height * 0.8) + canvas.height * 0.1; // Random Y (within margins)
+        startUfoSound();
+        // Random side (Left or Right)
+        if (Math.random() < 0.5) {
+          ufo.x = -UFO_SIZE;
+          ufo.xv = UFO_SPEED;
+        } else {
+          ufo.x = canvas.width + UFO_SIZE;
+          ufo.xv = -UFO_SPEED;
+        }
+      }
+
+      function distSquared(x1, y1, x2, y2) {
+        return Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2);
       }
 
       function shoot() {
@@ -349,7 +477,11 @@
         ship.thrust = { x: 0, y: 0 };
         ship.a = (90 / 180) * Math.PI;
         ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
-        ship.blinkTime = Math.ceil((INVULN_TIME * FPS) / 10);
+
+        // Initialize UFO timer (30-60 seconds) -> (30-60) * FPS
+        ufo.active = false;
+        stopUfoSound();
+        ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
 
         let x, y;
         for (let i = 0; i < ROIDS_NUM; i++) {
@@ -357,10 +489,10 @@
             x = Math.floor(Math.random() * canvas.width);
             y = Math.floor(Math.random() * canvas.height);
           } while (
-            distBetweenPoints(ship.x, ship.y, x, y) <
-            ROIDS_SIZE * 2 + ship.r
+            distSquared(ship.x, ship.y, x, y) <
+            Math.pow(ROIDS_SIZE * 2 + ship.r, 2)
           );
-          createAsteroid(x, y, Math.ceil(ROIDS_SIZE / 2));
+          createAsteroid(x, y, Math.ceil(ROIDS_SIZE));
         }
         updateMusicTempo();
         if (!musicRunning) {
@@ -370,46 +502,45 @@
 
       // --- Main Game Loop ---
       function update() {
+        const cosA = Math.cos(ship.a);
+        const sinA = Math.sin(ship.a);
+
         // 1. Draw Background
         ctx.fillStyle = "black";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         // 2. Thrust Logic & Physics
         if (ship.thrusting && !gameOver) {
-          ship.thrust.x += (THRUST * Math.cos(ship.a)) / FPS;
-          ship.thrust.y -= (THRUST * Math.sin(ship.a)) / FPS;
+          ship.thrust.x += THRUST * cosA * INV_FPS;
+          ship.thrust.y -= THRUST * sinA * INV_FPS;
 
           // Draw Thruster
           ctx.fillStyle = "orange";
           ctx.strokeStyle = "yellow";
-          ctx.lineWidth = SHIP_SIZE / 10;
+          ctx.lineWidth = THRUST_LW;
           ctx.beginPath();
           ctx.moveTo(
             // rear left
-            ship.x -
-              ship.r * ((2 / 3) * Math.cos(ship.a) + 0.5 * Math.sin(ship.a)),
-            ship.y +
-              ship.r * ((2 / 3) * Math.sin(ship.a) - 0.5 * Math.cos(ship.a))
+            ship.x - ship.r * ((2 / 3) * cosA + 0.5 * sinA),
+            ship.y + ship.r * ((2 / 3) * sinA - 0.5 * cosA)
           );
           ctx.lineTo(
             // rear center (flame tip)
-            ship.x - ((ship.r * 6) / 3) * Math.cos(ship.a),
-            ship.y + ((ship.r * 6) / 3) * Math.sin(ship.a)
+            ship.x - ((ship.r * 6) / 3) * cosA,
+            ship.y + ((ship.r * 6) / 3) * sinA
           );
           ctx.lineTo(
             // rear right
-            ship.x -
-              ship.r * ((2 / 3) * Math.cos(ship.a) - 0.5 * Math.sin(ship.a)),
-            ship.y +
-              ship.r * ((2 / 3) * Math.sin(ship.a) + 0.5 * Math.cos(ship.a))
+            ship.x - ship.r * ((2 / 3) * cosA - 0.5 * sinA),
+            ship.y + ship.r * ((2 / 3) * sinA + 0.5 * cosA)
           );
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
         }
 
-        ship.thrust.x -= (FRICTION * ship.thrust.x) / FPS;
-        ship.thrust.y -= (FRICTION * ship.thrust.y) / FPS;
+        ship.thrust.x -= FRICTION * ship.thrust.x * INV_FPS;
+        ship.thrust.y -= FRICTION * ship.thrust.y * INV_FPS;
 
         if (!gameOver) {
           ship.x += ship.thrust.x;
@@ -433,27 +564,28 @@
 
         if (!gameOver && blinkOn && !exploding) {
           ctx.strokeStyle = "white";
-          ctx.lineWidth = SHIP_SIZE / 15;
+          ctx.lineWidth = SHIP_LW;
           ctx.beginPath();
           ctx.moveTo(
-            ship.x + (4 / 3) * ship.r * Math.cos(ship.a),
-            ship.y - (4 / 3) * ship.r * Math.sin(ship.a)
+            ship.x + (4 / 3) * ship.r * cosA,
+            ship.y - (4 / 3) * ship.r * sinA
           );
           ctx.lineTo(
-            ship.x - ship.r * ((2 / 3) * Math.cos(ship.a) + Math.sin(ship.a)),
-            ship.y + ship.r * ((2 / 3) * Math.sin(ship.a) - Math.cos(ship.a))
+            ship.x - ship.r * ((2 / 3) * cosA + sinA),
+            ship.y + ship.r * ((2 / 3) * sinA - cosA)
           );
           ctx.lineTo(
-            ship.x - ship.r * ((2 / 3) * Math.cos(ship.a) - Math.sin(ship.a)),
-            ship.y + ship.r * ((2 / 3) * Math.sin(ship.a) + Math.cos(ship.a))
+            ship.x - ship.r * ((2 / 3) * cosA - sinA),
+            ship.y + ship.r * ((2 / 3) * sinA + cosA)
           );
           ctx.closePath();
           ctx.stroke();
         }
 
         // 4. Handle Asteroids (Squares)
+        handleAsteroidCollisions();
         ctx.strokeStyle = "#aaa";
-        ctx.lineWidth = SHIP_SIZE / 20;
+        ctx.lineWidth = ROID_LW;
 
         for (let i = asteroids.length - 1; i >= 0; i--) {
           let a = asteroids[i];
@@ -469,7 +601,6 @@
 
           // Draw Asteroid (Rock)
           ctx.strokeStyle = a.color;
-          ctx.lineWidth = SHIP_SIZE / 20;
           ctx.save();
           ctx.translate(a.x, a.y);
           ctx.rotate(a.a);
@@ -489,7 +620,7 @@
           if (
             !gameOver &&
             ship.blinkNum == 0 &&
-            distBetweenPoints(ship.x, ship.y, a.x, a.y) < ship.r + a.r
+            distSquared(ship.x, ship.y, a.x, a.y) < Math.pow(ship.r + a.r, 2)
           ) {
             explode(ship.x, ship.y);
             lives--;
@@ -525,14 +656,14 @@
           // Collision Bullet vs Asteroid
           for (let j = asteroids.length - 1; j >= 0; j--) {
             let a = asteroids[j];
-            if (distBetweenPoints(b.x, b.y, a.x, a.y) < a.r * 1.2) {
+            if (distSquared(b.x, b.y, a.x, a.y) < Math.pow(a.r * 1.2, 2)) {
               bullets.splice(i, 1);
 
               // --- TRIGGER EXPLOSION ---
               explode(a.x, a.y);
               // -------------------------
 
-              if (a.r > Math.ceil(ROIDS_SIZE / 4)) {
+              if (a.r > MIN_ROID_SIZE) {
                 createAsteroid(a.x, a.y, a.r / 2);
                 createAsteroid(a.x, a.y, a.r / 2);
               }
@@ -540,7 +671,7 @@
               playAsteroidBreakSound();
               updateMusicTempo();
               score += 100;
-              scoreEl.innerText = "SCORE: " + score;
+              scoreEl.textContent = "SCORE: " + score;
 
               if (asteroids.length === 0) {
                 resetGame(true); // Persist score for next level
@@ -552,6 +683,92 @@
           }
           if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
             bullets.splice(i, 1);
+          }
+        }
+
+        // 6. Handle UFO
+        if (!gameOver) {
+          if (ufo.active) {
+            // Move UFO
+            ufo.x += ufo.xv;
+
+            // Draw UFO (Saucer Shape)
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = SHIP_LW;
+            ctx.beginPath();
+            // Bottom arc (Main body)
+            ctx.ellipse(
+              ufo.x,
+              ufo.y,
+              UFO_SIZE,
+              UFO_SIZE / 2.5,
+              0,
+              0,
+              Math.PI * 2
+            );
+            // Top arc (Dome)
+            ctx.moveTo(ufo.x - UFO_SIZE / 2, ufo.y - UFO_SIZE / 6);
+            ctx.arc(ufo.x, ufo.y - UFO_SIZE / 6, UFO_SIZE / 2, Math.PI, 0);
+            ctx.stroke();
+
+            // Collision: Ship vs UFO
+            if (
+              ship.blinkNum == 0 &&
+              distSquared(ship.x, ship.y, ufo.x, ufo.y) <
+                Math.pow(ship.r + UFO_SIZE, 2)
+            ) {
+              explode(ship.x, ship.y);
+              explode(ufo.x, ufo.y);
+              ufo.active = false;
+              stopUfoSound();
+              ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
+              lives--;
+              livesEl.innerText = "LIVES: " + lives;
+              playExplosionSound();
+
+              if (lives <= 0) {
+                gameOver = true;
+                msgEl.style.display = "block";
+              } else {
+                ship.x = canvas.width / 2;
+                ship.y = canvas.height / 2;
+                ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
+              }
+            }
+
+            // Collision: Bullets vs UFO
+            for (let i = bullets.length - 1; i >= 0; i--) {
+              if (
+                distSquared(bullets[i].x, bullets[i].y, ufo.x, ufo.y) <
+                Math.pow(UFO_SIZE, 2)
+              ) {
+                bullets.splice(i, 1);
+                ufo.active = false;
+                stopUfoSound();
+                ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
+                score += UFO_POINTS;
+                scoreEl.textContent = "SCORE: " + score;
+                playExplosionSound();
+                explode(ufo.x, ufo.y);
+                break;
+              }
+            }
+
+            // Despawn checks
+            if (
+              (ufo.xv > 0 && ufo.x > canvas.width + UFO_SIZE) ||
+              (ufo.xv < 0 && ufo.x < -UFO_SIZE)
+            ) {
+              ufo.active = false;
+              stopUfoSound();
+              ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
+            }
+          } else {
+            // Timer Logic
+            ufo.timer--;
+            if (ufo.timer <= 0) {
+              spawnUfo();
+            }
           }
         }
 
