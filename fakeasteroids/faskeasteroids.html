@@ -75,6 +75,148 @@
       let bullets = [];
       let particles = []; // Array to hold explosion particles
 
+      // --- Audio System ---
+      let audioCtx = null;
+      let musicRunning = false;
+      let musicNote = 0;
+      let musicTempo = 1.0; // Seconds between beats
+
+      function initAudio() {
+        if (audioCtx) {
+          if (audioCtx.state === "suspended") {
+            audioCtx.resume();
+          }
+          return;
+        }
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") {
+          audioCtx.resume();
+        }
+
+        // If audio was just initialized, ensure music loop starts
+        if (!musicRunning && !gameOver) {
+          musicRunning = true;
+          playMusicNote();
+        }
+      }
+
+      function playLaserSound() {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(
+          200,
+          audioCtx.currentTime + 0.1
+        );
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 0.1
+        );
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+      }
+
+      function playAsteroidBreakSound() {
+        if (!audioCtx) return;
+        const bufferSize = audioCtx.sampleRate * 0.1;
+        const buffer = audioCtx.createBuffer(
+          1,
+          bufferSize,
+          audioCtx.sampleRate
+        );
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.value = 1000;
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 0.1
+        );
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        noise.start();
+      }
+
+      function playExplosionSound() {
+        if (!audioCtx) return;
+        const bufferSize = audioCtx.sampleRate * 0.4;
+        const buffer = audioCtx.createBuffer(
+          1,
+          bufferSize,
+          audioCtx.sampleRate
+        );
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(
+          100,
+          audioCtx.currentTime + 0.4
+        );
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 0.4
+        );
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+        noise.start();
+      }
+
+      function playMusicNote() {
+        if (!audioCtx || gameOver) {
+          musicRunning = false;
+          return;
+        }
+        musicRunning = true;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "square";
+        // Alternating notes: Low E (82.4Hz) and Low D (73.4Hz)
+        const freq = musicNote === 0 ? 82.4 : 73.4;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.001,
+          audioCtx.currentTime + 0.2
+        );
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.2);
+        musicNote = 1 - musicNote;
+
+        setTimeout(playMusicNote, musicTempo * 1000);
+      }
+
+      function updateMusicTempo() {
+        // Base is 1 second, decreases as asteroids decrease
+        const count = asteroids.length;
+        musicTempo = 0.2 + count * 0.15; // Faster as count gets lower
+        if (musicTempo > 1.0) musicTempo = 1.0;
+        if (musicTempo < 0.2) musicTempo = 0.2;
+      }
+
       // Ship Object
       const ship = {
         x: canvas.width / 2,
@@ -92,8 +234,11 @@
       // --- Input Handling ---
       document.addEventListener("keydown", keyDown);
       document.addEventListener("keyup", keyUp);
+      document.addEventListener("mousedown", () => initAudio());
 
       function keyDown(ev) {
+        initAudio();
+
         if (gameOver && ev.code === "KeyR") {
           resetGame();
           return;
@@ -160,6 +305,7 @@
 
       function shoot() {
         if (gameOver) return;
+        playLaserSound();
         bullets.push({
           x: ship.x + (4 / 3) * ship.r * Math.cos(ship.a),
           y: ship.y - (4 / 3) * ship.r * Math.sin(ship.a),
@@ -210,6 +356,10 @@
             ROIDS_SIZE * 2 + ship.r
           );
           createAsteroid(x, y, Math.ceil(ROIDS_SIZE / 2));
+        }
+        updateMusicTempo();
+        if (!musicRunning) {
+          playMusicNote();
         }
       }
 
@@ -269,13 +419,14 @@
         else if (ship.y > canvas.height + ship.r) ship.y = 0 - ship.r;
 
         // 3. Draw Ship (Triangle)
+        if (ship.blinkNum > 0) {
+          ship.blinkNum--;
+        }
+
         const blinkOn = Math.floor(ship.blinkNum / 10) % 2 === 0;
         const exploding = ship.explodeTime > 0;
 
         if (!gameOver && blinkOn && !exploding) {
-          if (ship.blinkNum > 0) {
-            ship.blinkNum--;
-          }
           ctx.strokeStyle = "white";
           ctx.lineWidth = SHIP_SIZE / 15;
           ctx.beginPath();
@@ -341,8 +492,10 @@
 
             if (lives <= 0) {
               gameOver = true;
+              playExplosionSound();
               msgEl.style.display = "block";
             } else {
+              playExplosionSound();
               // Respawn
               ship.x = canvas.width / 2;
               ship.y = canvas.height / 2;
@@ -375,15 +528,20 @@
               // -------------------------
 
               if (a.r > Math.ceil(ROIDS_SIZE / 4)) {
-                asteroids.push(asteroids[j]);
                 createAsteroid(a.x, a.y, a.r / 2);
                 createAsteroid(a.x, a.y, a.r / 2);
               }
               asteroids.splice(j, 1);
+              playAsteroidBreakSound();
+              updateMusicTempo();
               score += 100;
               scoreEl.innerText = "SCORE: " + score;
 
-              if (asteroids.length === 0) resetGame();
+              if (asteroids.length === 0) {
+                resetGame();
+                i = -1; // Stop processing bullets as arrays are reset
+                break;
+              }
               break;
             }
           }
