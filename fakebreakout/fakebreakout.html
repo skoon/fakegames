@@ -113,6 +113,7 @@
   <body>
     <div class="stats">
       <div id="score-display">Score: 0</div>
+      <div id="level-display">Level: 1</div>
       <div id="lives-display">Balls: 3</div>
     </div>
 
@@ -163,6 +164,7 @@
       const gameOverOverlay = document.getElementById("game-over-overlay");
       const launchHint = document.getElementById("launch-hint");
       const scoreDisplay = document.getElementById("score-display");
+      const levelDisplay = document.getElementById("level-display");
       const livesDisplay = document.getElementById("lives-display");
       const endTitle = document.getElementById("end-title");
       const finalScore = document.getElementById("final-score");
@@ -185,11 +187,54 @@
       // Game State
       let score = 0;
       let lives = 3;
+      let currentLevel = 1;
       let gameActive = false;
       let ballActive = false;
       let keys = {};
       let blocks = [];
       let particles = [];
+
+      // Level Definitions
+      // Characters: ' ' = empty, '#' = random color row, '0'-'9' = fixed color index
+      const LEVELS = {
+        1: [
+          "               ",
+          " ############# ",
+          " ############# ",
+          " ############# ",
+          " ############# ",
+          "               ",
+        ],
+        2: [
+          " # # # # # # # ",
+          "               ",
+          " # # # # # # # ",
+          "               ",
+          " # # # # # # # ",
+          "               ",
+          " # # # # # # # ",
+        ],
+        3: [
+          "      ###      ",
+          "     #####     ",
+          "    #######    ",
+          "   #########   ",
+          "  ###########  ",
+          " ############# ",
+          "###############",
+        ],
+        4: [
+          "##           ##",
+          "###         ###",
+          "####       ####",
+          "#####     #####",
+          "######   ######",
+          "#####     #####",
+          "####       ####",
+          "###         ###",
+          "##           ##",
+        ],
+      };
 
       // Paddle: 3 blocks wide, 1 block height, 1 block above bottom
       const paddle = {
@@ -212,6 +257,20 @@
         color: "#ffffff",
       };
 
+      function generateRandomLayout() {
+        const rows = Math.floor(Math.random() * 6) + 4; // 4 to 9 rows
+        const layout = [];
+        for (let r = 0; r < rows; r++) {
+          let rowStr = "";
+          for (let c = 0; c < 15; c++) {
+            // 60% chance of block, 40% space
+            rowStr += Math.random() > 0.4 ? "#" : " ";
+          }
+          layout.push(rowStr);
+        }
+        return layout;
+      }
+
       function createBlocks() {
         blocks = [];
         const blockWidth = BLOCK_SIZE;
@@ -220,14 +279,34 @@
         const startX = (CANVAS_WIDTH - 15 * blockWidth) / 2;
         const startY = BLOCK_SIZE * 2;
 
-        for (let r = 0; r < 5; r++) {
-          for (let c = 0; c < 15; c++) {
+        let layout = LEVELS[currentLevel];
+        if (!layout) {
+          layout = generateRandomLayout();
+        }
+
+        for (let r = 0; r < layout.length; r++) {
+          const rowString = layout[r];
+          // Ensure we don't exceed 15 columns even if string is longer
+          const cols = Math.min(rowString.length, 15);
+
+          for (let c = 0; c < cols; c++) {
+            const char = rowString[c];
+            if (char === " " || char === ".") continue;
+
+            let color = ROW_COLORS[r % ROW_COLORS.length];
+
+            // Check if char is a digit for custom color index
+            if (!isNaN(parseInt(char))) {
+              const colorIdx = parseInt(char) % ROW_COLORS.length;
+              color = ROW_COLORS[colorIdx];
+            }
+
             blocks.push({
               x: startX + c * blockWidth,
               y: startY + r * blockHeight,
               width: blockWidth - 2,
               height: blockHeight - 2,
-              color: ROW_COLORS[r],
+              color: color,
               active: true,
             });
           }
@@ -264,7 +343,11 @@
         gameOverOverlay.style.display = "none";
         initGridCanvas();
         gameActive = true;
-        score = 0;
+        // Only reset score and level if this is a full reset/start
+        if (score === 0 && currentLevel === 1) {
+          score = 0;
+          currentLevel = 1;
+        }
         lives = 3;
         updateUI();
         createBlocks();
@@ -272,7 +355,33 @@
         requestAnimationFrame(update);
       }
 
+      function nextLevel() {
+        currentLevel++;
+        gameActive = false;
+        ballActive = false;
+
+        // Show brief "Level Complete" message or just transition
+        // For now, instant transition with a small delay could be nice,
+        // but let's just rebuild the board and continue.
+        // We'll reset ball but keep lives/score.
+
+        createBlocks();
+        resetBall();
+        gameActive = true;
+        updateUI();
+
+        // Flash level display
+        levelDisplay.style.color = "#fff";
+        levelDisplay.style.transform = "scale(1.5)";
+        setTimeout(() => {
+          levelDisplay.style.color = "#94a3b8";
+          levelDisplay.style.transform = "scale(1)";
+        }, 500);
+      }
+
       function resetGame() {
+        score = 0;
+        currentLevel = 1;
         initGame();
       }
 
@@ -316,6 +425,7 @@
 
       function updateUI() {
         scoreDisplay.innerText = `Score: ${score}`;
+        levelDisplay.innerText = `Level: ${currentLevel}`;
         livesDisplay.innerText = `Balls: ${lives}`;
       }
 
@@ -418,7 +528,9 @@
             }
           }
 
-          if (!activeBlocksFound) showGameOver(true);
+          if (!activeBlocksFound) {
+            nextLevel();
+          }
 
           // Lose Life (Passes bottom)
           if (ball.y - ball.radius > CANVAS_HEIGHT) {
