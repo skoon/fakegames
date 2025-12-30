@@ -329,12 +329,17 @@
         }
       }
 
-      function resetGame() {
+      function resetGame(newLevel = false) {
         gameOver = false;
-        lives = 3;
-        score = 0;
-        scoreEl.innerText = "SCORE: 0";
-        livesEl.innerText = "LIVES: 3";
+
+        // Only reset score and lives if it's a full reset, not a new level
+        if (!newLevel) {
+          lives = 3;
+          score = 0;
+        }
+
+        scoreEl.innerText = "SCORE: " + score;
+        livesEl.innerText = "LIVES: " + lives;
         msgEl.style.display = "none";
         asteroids = [];
         bullets = [];
@@ -538,7 +543,7 @@
               scoreEl.innerText = "SCORE: " + score;
 
               if (asteroids.length === 0) {
-                resetGame();
+                resetGame(true); // Persist score for next level
                 i = -1; // Stop processing bullets as arrays are reset
                 break;
               }
