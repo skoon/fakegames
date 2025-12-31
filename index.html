@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arcade Center 198X</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --neon-pink: #ff00ff;
+        --neon-blue: #00ffff;
+        --neon-green: #00ff00;
+        --neon-purple: #bd00ff;
+        --bg-color: #050505;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: var(--bg-color);
+        color: #fff;
+        font-family: "Press Start 2P", monospace;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        overflow-x: hidden;
+      }
+
+      /* CRT Effect Overlay */
+      .crt-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: linear-gradient(
+            rgba(18, 16, 16, 0) 50%,
+            rgba(0, 0, 0, 0.25) 50%
+          ),
+          linear-gradient(
+            90deg,
+            rgba(255, 0, 0, 0.06),
+            rgba(0, 255, 0, 0.02),
+            rgba(0, 0, 255, 0.06)
+          );
+        background-size: 100% 2px, 3px 100%;
+        pointer-events: none;
+        z-index: 10;
+        animation: flicker 0.15s infinite;
+      }
+
+      .crt-glow {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        box-shadow: inset 0 0 100px rgba(0, 0, 0, 0.9);
+        pointer-events: none;
+        z-index: 9;
+      }
+
+      header {
+        margin-top: 40px;
+        margin-bottom: 60px;
+        text-align: center;
+        animation: pulse-header 3s infinite ease-in-out;
+        z-index: 2;
+      }
+
+      h1 {
+        font-size: 3rem;
+        color: var(--neon-pink);
+        text-shadow: 0 0 5px var(--neon-pink), 0 0 10px var(--neon-pink),
+          0 0 20px var(--neon-pink), 0 0 40px var(--neon-purple);
+        letter-spacing: 5px;
+        margin-bottom: 10px;
+      }
+
+      .subtitle {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 1.2rem;
+        color: var(--neon-blue);
+        text-transform: uppercase;
+        letter-spacing: 3px;
+      }
+
+      .arcade-cabinet-container {
+        display: flex;
+        justify-content: center;
+        gap: 40px;
+        flex-wrap: wrap;
+        max-width: 1200px;
+        padding: 20px;
+        z-index: 2;
+      }
+
+      .game-card {
+        background: rgba(20, 20, 20, 0.8);
+        border: 4px solid #333;
+        width: 300px;
+        padding: 20px;
+        text-align: center;
+        position: relative;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-height: 350px;
+      }
+
+      .game-card:hover {
+        transform: scale(1.05) translateY(-10px);
+        border-color: var(--card-color);
+        box-shadow: 0 0 15px var(--card-color), inset 0 0 15px var(--card-color);
+      }
+
+      .game-icon {
+        font-size: 50px;
+        margin-bottom: 20px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .game-title {
+        font-size: 1.2rem;
+        color: var(--card-color);
+        margin-bottom: 15px;
+        line-height: 1.5;
+        text-transform: uppercase;
+      }
+
+      .game-blurb {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 1rem;
+        color: #ddd;
+        margin-bottom: 30px;
+        flex-grow: 1;
+      }
+
+      .play-btn {
+        display: inline-block;
+        background: transparent;
+        color: var(--card-color);
+        border: 2px solid var(--card-color);
+        padding: 10px 20px;
+        text-decoration: none;
+        font-size: 0.8rem;
+        transition: all 0.2s;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        animation: blink 2s infinite;
+      }
+
+      .game-card:hover .play-btn {
+        background: var(--card-color);
+        color: black;
+        box-shadow: 0 0 10px var(--card-color);
+        animation: none;
+      }
+
+      /* Specific styles for each game */
+      .invaders {
+        --card-color: var(--neon-green);
+      }
+
+      .breakout {
+        --card-color: var(--neon-blue);
+      }
+
+      .asteroids {
+        --card-color: #ff3333;
+      }
+
+      footer {
+        margin-top: auto;
+        margin-bottom: 20px;
+        font-family: "Share Tech Mono", monospace;
+        color: #555;
+        font-size: 0.8rem;
+        z-index: 2;
+      }
+
+      @keyframes flicker {
+        0% {
+          opacity: 0.9;
+        }
+        5% {
+          opacity: 0.85;
+        }
+        10% {
+          opacity: 0.9;
+        }
+        15% {
+          opacity: 1;
+        }
+        20% {
+          opacity: 0.9;
+        }
+        25% {
+          opacity: 0.85;
+        }
+        100% {
+          opacity: 0.9;
+        }
+      }
+
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      @keyframes pulse-header {
+        0% {
+          text-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+        }
+        50% {
+          text-shadow: 0 0 15px var(--neon-pink), 0 0 30px var(--neon-pink),
+            0 0 50px var(--neon-purple);
+        }
+        100% {
+          text-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+        }
+      }
+
+      /* Scanline movement */
+      @keyframes scanline {
+        0% {
+          transform: translateY(0);
+        }
+        100% {
+          transform: translateY(100vh);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="crt-overlay"></div>
+    <div class="crt-glow"></div>
+
+    <header>
+      <h1>ARCADE ZERO</h1>
+      <div class="subtitle">Select Your Destiny</div>
+    </header>
+
+    <div class="arcade-cabinet-container">
+      <!-- Space Invaders -->
+      <a
+        href="fakespaceinvaders/fakespaceinvaders.html"
+        style="text-decoration: none"
+      >
+        <div class="game-card invaders">
+          <div class="game-icon">👾</div>
+          <div class="game-title">Fake Space Invaders</div>
+          <div class="game-blurb">
+            Defend Earth from the pixelated horde. Classic fixed-shooter action.
+          </div>
+          <div class="play-btn">Insert Coin</div>
+        </div>
+      </a>
+
+      <!-- Breakout -->
+      <a href="fakebreakout/fakebreakout.html" style="text-decoration: none">
+        <div class="game-card breakout">
+          <div class="game-icon">🧱</div>
+          <div class="game-title">Fake Breakout</div>
+          <div class="game-blurb">
+            Smash the bricks, grab power-ups, and don't drop the ball!
+          </div>
+          <div class="play-btn">Insert Coin</div>
+        </div>
+      </a>
+
+      <!-- Asteroids -->
+      <a href="fakeasteroids/faskeasteroids.html" style="text-decoration: none">
+        <div class="game-card asteroids">
+          <div class="game-icon">☄️</div>
+          <div class="game-title">Fake Asteroids</div>
+          <div class="game-blurb">
+            Navigate the asteroid belt. Vector graphics goodness. Blast 'em all!
+          </div>
+          <div class="play-btn">Insert Coin</div>
+        </div>
+      </a>
+    </div>
+
+    <footer>© 2025 Antigravity Arcade Systems</footer>
+
+    <script>
+      // Little script to add some CRT flicker randomness
+      setInterval(() => {
+        const overlay = document.querySelector(".crt-overlay");
+        overlay.style.opacity = 0.85 + Math.random() * 0.15;
+      }, 100);
+    </script>
+  </body>
+</html>
