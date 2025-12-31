@@ -233,6 +233,7 @@
       let alienDirection = 1;
       let alienSpeed = 1;
       let alienMoveTimer = 0;
+      let baseAlienMoveInterval = 30;
       let alienMoveInterval = 30; // Frames between moves
       let alienDropAmount = 20;
 
@@ -244,6 +245,9 @@
 
       // Bases
       let bases = [];
+
+      // Particles
+      let particles = [];
 
       // Alien sprites (pixel data for 6 different types)
       const alienSprites = [
@@ -316,8 +320,152 @@
       // Points per row (bottom to top)
       const pointsPerRow = [5, 10, 15, 20, 25, 30];
 
+      // Audio Context and Sound Manager
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      const SoundManager = {
+        musicTimer: null,
+        isMusicPlaying: false,
+        noteIndex: 0,
+        baseTempo: 1000,
+        currentTempo: 1000,
+        notes: [180, 170, 160, 150], // Descending bass line frequencies
+
+        init() {
+          if (audioCtx.state === "suspended") {
+            audioCtx.resume();
+          }
+        },
+
+        playShoot() {
+          if (audioCtx.state === "suspended") audioCtx.resume();
+
+          const osc = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+
+          osc.type = "square";
+          osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(
+            110,
+            audioCtx.currentTime + 0.1
+          );
+
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(
+            0.01,
+            audioCtx.currentTime + 0.1
+          );
+
+          osc.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.1);
+        },
+
+        playMusicNote() {
+          if (!this.isMusicPlaying) return;
+
+          const osc = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(
+            this.notes[this.noteIndex],
+            audioCtx.currentTime
+          );
+
+          // Short, percussive envelope
+          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(
+            0.001,
+            audioCtx.currentTime + 0.05
+          );
+
+          // Lowpass filter for "muffled" bass sound
+          const filter = audioCtx.createBiquadFilter();
+          filter.type = "lowpass";
+          filter.frequency.value = 200;
+
+          osc.connect(filter);
+          filter.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.05);
+
+          this.noteIndex = (this.noteIndex + 1) % 4;
+          this.musicTimer = setTimeout(
+            () => this.playMusicNote(),
+            this.currentTempo
+          );
+        },
+
+        startMusic() {
+          if (this.isMusicPlaying) return;
+          this.isMusicPlaying = true;
+          this.noteIndex = 0;
+          this.currentTempo = this.baseTempo;
+          this.playMusicNote();
+        },
+
+        stopMusic() {
+          this.isMusicPlaying = false;
+          if (this.musicTimer) clearTimeout(this.musicTimer);
+        },
+
+        updateTempo(activeAliens, totalAliens) {
+          // Tempo ranges from 1000ms (slow) down to 100ms (fast)
+          const ratio = activeAliens / totalAliens;
+          this.currentTempo = Math.max(100, 1000 * ratio);
+        },
+
+        playExplosion() {
+          if (audioCtx.state === "suspended") audioCtx.resume();
+
+          const bufferSize = audioCtx.sampleRate * 1.0; // 1 second
+          const buffer = audioCtx.createBuffer(
+            1,
+            bufferSize,
+            audioCtx.sampleRate
+          );
+          const data = buffer.getChannelData(0);
+
+          for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+          }
+
+          const noise = audioCtx.createBufferSource();
+          noise.buffer = buffer;
+
+          const filter = audioCtx.createBiquadFilter();
+          filter.type = "lowpass";
+          filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
+          filter.frequency.exponentialRampToValueAtTime(
+            100,
+            audioCtx.currentTime + 1.0
+          );
+
+          const gainNode = audioCtx.createGain();
+          gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(
+            0.01,
+            audioCtx.currentTime + 1.0
+          );
+
+          noise.connect(filter);
+          filter.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+
+          noise.start();
+        },
+      };
+
       // Initialize game
       function init() {
+        SoundManager.init();
+        SoundManager.startMusic();
+
         player.x = CANVAS_WIDTH / 2 - PLAYER_WIDTH / 2;
         player.y = CANVAS_HEIGHT - 50;
         playerBolts = [];
@@ -326,7 +474,8 @@
         createBases();
         alienDirection = 1;
         alienSpeed = 1 + (wave - 1) * 0.3;
-        alienMoveInterval = Math.max(15, 30 - (wave - 1) * 3);
+        baseAlienMoveInterval = Math.max(15, 30 - (wave - 1) * 3);
+        alienMoveInterval = baseAlienMoveInterval;
         updateUI();
       }
 
@@ -476,6 +625,15 @@
         ctx.shadowBlur = 0;
       }
 
+      function drawParticles() {
+        particles.forEach((p) => {
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = p.life;
+          ctx.fillRect(p.x, p.y, p.size, p.size);
+        });
+        ctx.globalAlpha = 1.0;
+      }
+
       // Update functions
       function updatePlayer() {
         if (keys.left && player.x > 0) {
@@ -496,6 +654,7 @@
             y: player.y - BOLT_HEIGHT,
             speed: 10,
           });
+          SoundManager.playShoot();
           spacePressed = true;
         }
         if (!keys.space) {
@@ -584,6 +743,20 @@
             if (alien.alive && checkCollision(bolt, alien)) {
               alien.alive = false;
               score += alien.points;
+              createExplosion(
+                alien.x + alien.width / 2,
+                alien.y + alien.height / 2,
+                alienColors[alien.spriteIndex]
+              );
+
+              // Update music speed and alien internal speed
+              const totalAliens = ALIEN_ROWS * ALIEN_COLS;
+              const activeAliens = aliens.filter((a) => a.alive).length;
+              SoundManager.updateTempo(activeAliens, totalAliens);
+
+              const ratio = activeAliens / totalAliens;
+              alienMoveInterval = Math.max(2, baseAlienMoveInterval * ratio);
+
               updateUI();
 
               // Check win condition
@@ -614,6 +787,11 @@
 
           // Check collision with player
           if (checkCollision(bolt, player)) {
+            createExplosion(
+              player.x + player.width / 2,
+              player.y + player.height / 2,
+              "#00ff64"
+            );
             playerHit();
             return false;
           }
@@ -665,6 +843,29 @@
         }
       }
 
+      function createExplosion(x, y, color) {
+        for (let i = 0; i < 15; i++) {
+          particles.push({
+            x: x,
+            y: y,
+            vx: (Math.random() - 0.5) * 8,
+            vy: (Math.random() - 0.5) * 8,
+            life: 1.0,
+            color: color,
+            size: Math.random() * 3 + 2,
+          });
+        }
+      }
+
+      function updateParticles() {
+        particles.forEach((p) => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life -= 0.02;
+        });
+        particles = particles.filter((p) => p.life > 0);
+      }
+
       function destroyBaseSegments(base, x, y, radius) {
         base.segments.forEach((segment) => {
           if (segment.alive) {
@@ -690,6 +891,7 @@
       }
 
       function playerHit() {
+        SoundManager.playExplosion();
         lives--;
         updateUI();
 
@@ -704,6 +906,7 @@
       }
 
       function gameOver() {
+        SoundManager.stopMusic();
         gameState = "gameover";
         if (score > highScore) {
           highScore = score;
@@ -714,6 +917,7 @@
       }
 
       function win() {
+        SoundManager.stopMusic();
         gameState = "win";
         document.getElementById("winScore").textContent = score;
         document.getElementById("winScreen").style.display = "flex";
@@ -743,6 +947,7 @@
           updatePlayer();
           updateAliens();
           updateBolts();
+          updateParticles();
         }
 
         // Draw game objects
@@ -750,6 +955,7 @@
         aliens.forEach(drawAlien);
         drawBases();
         drawBolts();
+        drawParticles();
 
         requestAnimationFrame(gameLoop);
       }
