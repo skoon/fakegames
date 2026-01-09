@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fake Tempest</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #000;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        font-family: "Courier New", monospace;
+        overflow: hidden;
+      }
+
+      #gameContainer {
+        position: relative;
+      }
+
+      canvas {
+        display: block;
+        border: 2px solid #0ff;
+        box-shadow: 0 0 20px #0ff, 0 0 40px #00f;
+      }
+
+      #hud {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        color: #0ff;
+        font-size: 18px;
+        text-shadow: 0 0 10px #0ff;
+      }
+
+      #gameOver {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #f00;
+        font-size: 48px;
+        text-shadow: 0 0 20px #f00;
+        display: none;
+        text-align: center;
+      }
+
+      #gameOver span {
+        display: block;
+        font-size: 18px;
+        color: #0ff;
+        margin-top: 20px;
+      }
+
+      #startScreen {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #ff0;
+        font-size: 36px;
+        text-shadow: 0 0 20px #ff0;
+        text-align: center;
+      }
+
+      #startScreen h1 {
+        font-size: 64px;
+        margin-bottom: 30px;
+        color: #0ff;
+        text-shadow: 0 0 30px #0ff, 0 0 60px #00f;
+      }
+
+      #startScreen .controls {
+        font-size: 18px;
+        color: #0f0;
+        margin-top: 30px;
+        line-height: 1.8;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="gameContainer">
+      <canvas id="gameCanvas" width="800" height="800"></canvas>
+      <div id="hud">
+        <div>SCORE: <span id="score">0</span></div>
+        <div>LEVEL: <span id="level">1</span></div>
+        <div>LIVES: <span id="lives">3</span></div>
+      </div>
+      <div id="startScreen">
+        <h1>FAKE TEMPEST</h1>
+        <div>Press SPACE to Start</div>
+        <div class="controls">
+          ← → Arrow Keys to Move<br />
+          SPACE to Fire
+        </div>
+      </div>
+      <div id="gameOver">
+        GAME OVER
+        <span>Press SPACE to Restart</span>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      const scoreDisplay = document.getElementById("score");
+      const levelDisplay = document.getElementById("level");
+      const livesDisplay = document.getElementById("lives");
+      const gameOverScreen = document.getElementById("gameOver");
+      const startScreen = document.getElementById("startScreen");
+
+      // Game constants
+      const CENTER_X = canvas.width / 2;
+      const CENTER_Y = canvas.height / 2;
+      const OUTER_RADIUS = 350;
+      const INNER_RADIUS = 80;
+      const NUM_LANES = 16;
+
+      // Game state
+      let gameState = "start"; // 'start', 'playing', 'gameOver'
+      let score = 0;
+      let level = 1;
+      let lives = 3;
+      let player = {
+        lane: 0,
+        depth: 0, // 0 = outer edge
+      };
+      let bullets = [];
+      let enemies = [];
+      let spikes = []; // Spike trail left by enemies
+      let particles = [];
+      let lastEnemySpawn = 0;
+      let enemySpawnRate = 2000;
+      let levelStartTime = 0;
+      let enemiesKilledThisLevel = 0;
+      let enemiesPerLevel = 10;
+
+      // Input handling
+      const keys = {
+        left: false,
+        right: false,
+        space: false,
+      };
+      let lastFireTime = 0;
+      const fireRate = 150;
+      let lastMoveTime = 0;
+      const moveRate = 80;
+
+      // Lane geometry cache
+      let laneGeometry = [];
+
+      function calculateLaneGeometry() {
+        laneGeometry = [];
+        const angleStep = (Math.PI * 2) / NUM_LANES;
+
+        for (let i = 0; i < NUM_LANES; i++) {
+          const angle1 = i * angleStep - Math.PI / 2;
+          const angle2 = (i + 1) * angleStep - Math.PI / 2;
+
+          laneGeometry.push({
+            angle1,
+            angle2,
+            centerAngle: (angle1 + angle2) / 2,
+            outer1: {
+              x: CENTER_X + Math.cos(angle1) * OUTER_RADIUS,
+              y: CENTER_Y + Math.sin(angle1) * OUTER_RADIUS,
+            },
+            outer2: {
+              x: CENTER_X + Math.cos(angle2) * OUTER_RADIUS,
+              y: CENTER_Y + Math.sin(angle2) * OUTER_RADIUS,
+            },
+            inner1: {
+              x: CENTER_X + Math.cos(angle1) * INNER_RADIUS,
+              y: CENTER_Y + Math.sin(angle1) * INNER_RADIUS,
+            },
+            inner2: {
+              x: CENTER_X + Math.cos(angle2) * INNER_RADIUS,
+              y: CENTER_Y + Math.sin(angle2) * INNER_RADIUS,
+            },
+          });
+        }
+      }
+
+      function getPositionInLane(lane, depth) {
+        const geo = laneGeometry[lane];
+        const t = depth; // 0 = outer, 1 = inner
+        const x1 = geo.outer1.x + (geo.inner1.x - geo.outer1.x) * t;
+        const y1 = geo.outer1.y + (geo.inner1.y - geo.outer1.y) * t;
+        const x2 = geo.outer2.x + (geo.inner2.x - geo.outer2.x) * t;
+        const y2 = geo.outer2.y + (geo.inner2.y - geo.outer2.y) * t;
+        return {
+          x: (x1 + x2) / 2,
+          y: (y1 + y2) / 2,
+          angle: geo.centerAngle,
+        };
+      }
+
+      function drawTube() {
+        // Draw the tube lanes
+        ctx.strokeStyle = "#00f";
+        ctx.lineWidth = 2;
+
+        for (let i = 0; i < NUM_LANES; i++) {
+          const geo = laneGeometry[i];
+
+          // Draw lane edges
+          ctx.beginPath();
+          ctx.moveTo(geo.outer1.x, geo.outer1.y);
+          ctx.lineTo(geo.inner1.x, geo.inner1.y);
+          ctx.stroke();
+
+          // Highlight current lane
+          if (i === player.lane) {
+            ctx.fillStyle = "rgba(0, 255, 255, 0.15)";
+            ctx.beginPath();
+            ctx.moveTo(geo.outer1.x, geo.outer1.y);
+            ctx.lineTo(geo.outer2.x, geo.outer2.y);
+            ctx.lineTo(geo.inner2.x, geo.inner2.y);
+            ctx.lineTo(geo.inner1.x, geo.inner1.y);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+
+        // Draw outer rim
+        ctx.strokeStyle = "#0ff";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(CENTER_X, CENTER_Y, OUTER_RADIUS, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Draw inner rim
+        ctx.strokeStyle = "#00f";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(CENTER_X, CENTER_Y, INNER_RADIUS, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      function drawPlayer() {
+        const pos = getPositionInLane(player.lane, 0);
+        const geo = laneGeometry[player.lane];
+
+        // Draw player ship (claw shape)
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.rotate(pos.angle + Math.PI / 2);
+
+        ctx.strokeStyle = "#ff0";
+        ctx.lineWidth = 3;
+        ctx.shadowColor = "#ff0";
+        ctx.shadowBlur = 15;
+
+        // Main body
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.lineTo(0, -25);
+        ctx.lineTo(15, 0);
+        ctx.stroke();
+
+        // Claw prongs
+        ctx.beginPath();
+        ctx.moveTo(-15, 0);
+        ctx.lineTo(-20, 10);
+        ctx.moveTo(15, 0);
+        ctx.lineTo(20, 10);
+        ctx.stroke();
+
+        // Center line
+        ctx.beginPath();
+        ctx.moveTo(0, -25);
+        ctx.lineTo(0, 5);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      function drawBullets() {
+        ctx.shadowColor = "#ff0";
+        ctx.shadowBlur = 10;
+
+        for (const bullet of bullets) {
+          const pos = getPositionInLane(bullet.lane, bullet.depth);
+
+          ctx.fillStyle = "#ff0";
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Trail effect
+          ctx.strokeStyle = "rgba(255, 255, 0, 0.5)";
+          ctx.lineWidth = 2;
+          const trailPos = getPositionInLane(
+            bullet.lane,
+            Math.max(0, bullet.depth - 0.1)
+          );
+          ctx.beginPath();
+          ctx.moveTo(trailPos.x, trailPos.y);
+          ctx.lineTo(pos.x, pos.y);
+          ctx.stroke();
+        }
+
+        ctx.shadowBlur = 0;
+      }
+
+      function drawEnemies() {
+        for (const enemy of enemies) {
+          const pos = getPositionInLane(enemy.lane, enemy.depth);
+
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(pos.angle + Math.PI / 2);
+
+          if (enemy.type === "flipper") {
+            // Flipper enemy (classic tempest enemy)
+            ctx.strokeStyle = "#f00";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "#f00";
+            ctx.shadowBlur = 10;
+
+            const size = 12;
+            ctx.beginPath();
+            ctx.moveTo(-size, -size);
+            ctx.lineTo(size, -size);
+            ctx.lineTo(size, size);
+            ctx.lineTo(-size, size);
+            ctx.closePath();
+            ctx.stroke();
+
+            // X pattern inside
+            ctx.beginPath();
+            ctx.moveTo(-size, -size);
+            ctx.lineTo(size, size);
+            ctx.moveTo(size, -size);
+            ctx.lineTo(-size, size);
+            ctx.stroke();
+          } else if (enemy.type === "tanker") {
+            // Tanker enemy (larger, splits)
+            ctx.strokeStyle = "#f0f";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "#f0f";
+            ctx.shadowBlur = 10;
+
+            const size = 16;
+            ctx.beginPath();
+            ctx.moveTo(0, -size);
+            ctx.lineTo(size, 0);
+            ctx.lineTo(0, size);
+            ctx.lineTo(-size, 0);
+            ctx.closePath();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (enemy.type === "spiker") {
+            // Spiker enemy (leaves spikes)
+            ctx.strokeStyle = "#0f0";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "#0f0";
+            ctx.shadowBlur = 10;
+
+            const size = 10;
+            // Triangle shape
+            ctx.beginPath();
+            ctx.moveTo(0, -size);
+            ctx.lineTo(size, size);
+            ctx.lineTo(-size, size);
+            ctx.closePath();
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        }
+
+        ctx.shadowBlur = 0;
+      }
+
+      function drawSpikes() {
+        ctx.strokeStyle = "#0f0";
+        ctx.lineWidth = 2;
+        ctx.shadowColor = "#0f0";
+        ctx.shadowBlur = 5;
+
+        for (const spike of spikes) {
+          const startPos = getPositionInLane(spike.lane, spike.startDepth);
+          const endPos = getPositionInLane(spike.lane, spike.endDepth);
+
+          ctx.beginPath();
+          ctx.moveTo(startPos.x, startPos.y);
+          ctx.lineTo(endPos.x, endPos.y);
+          ctx.stroke();
+        }
+
+        ctx.shadowBlur = 0;
+      }
+
+      function drawParticles() {
+        for (const particle of particles) {
+          ctx.fillStyle = particle.color;
+          ctx.globalAlpha = particle.life;
+          ctx.beginPath();
+          ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function createExplosion(x, y, color, count = 15) {
+        for (let i = 0; i < count; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 2 + Math.random() * 4;
+          particles.push({
+            x,
+            y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            size: 2 + Math.random() * 3,
+            color,
+            life: 1,
+          });
+        }
+      }
+
+      function spawnEnemy() {
+        const lane = Math.floor(Math.random() * NUM_LANES);
+        const types = ["flipper", "flipper", "flipper", "tanker", "spiker"];
+        const type = types[Math.floor(Math.random() * types.length)];
+
+        enemies.push({
+          lane,
+          depth: 1, // Start at inner edge
+          type,
+          speed: 0.001 + level * 0.0003 + Math.random() * 0.001,
+          flipTimer: 0,
+          flipDirection: Math.random() < 0.5 ? -1 : 1,
+        });
+      }
+
+      function fireBullet() {
+        bullets.push({
+          lane: player.lane,
+          depth: 0,
+          speed: 0.02,
+        });
+
+        // Fire sound effect using Web Audio
+        playSound(880, 0.1, "square");
+      }
+
+      function playSound(freq, duration, type = "sine") {
+        try {
+          const audioCtx = new (window.AudioContext ||
+            window.webkitAudioContext)();
+          const oscillator = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+
+          oscillator.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+
+          oscillator.frequency.value = freq;
+          oscillator.type = type;
+
+          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(
+            0.01,
+            audioCtx.currentTime + duration
+          );
+
+          oscillator.start(audioCtx.currentTime);
+          oscillator.stop(audioCtx.currentTime + duration);
+        } catch (e) {
+          // Audio not supported
+        }
+      }
+
+      function update(deltaTime) {
+        const now = Date.now();
+
+        // Player movement
+        if (keys.left && now - lastMoveTime > moveRate) {
+          player.lane = (player.lane - 1 + NUM_LANES) % NUM_LANES;
+          lastMoveTime = now;
+        }
+        if (keys.right && now - lastMoveTime > moveRate) {
+          player.lane = (player.lane + 1) % NUM_LANES;
+          lastMoveTime = now;
+        }
+
+        // Firing
+        if (keys.space && now - lastFireTime > fireRate) {
+          fireBullet();
+          lastFireTime = now;
+        }
+
+        // Update bullets
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          bullets[i].depth += bullets[i].speed;
+
+          if (bullets[i].depth >= 1) {
+            bullets.splice(i, 1);
+          }
+        }
+
+        // Spawn enemies
+        if (now - lastEnemySpawn > enemySpawnRate && enemies.length < 8) {
+          spawnEnemy();
+          lastEnemySpawn = now;
+        }
+
+        // Update enemies
+        for (let i = enemies.length - 1; i >= 0; i--) {
+          const enemy = enemies[i];
+
+          // Move toward player (outer edge)
+          enemy.depth -= enemy.speed * deltaTime;
+
+          // Flipper lane-changing behavior
+          if (enemy.type === "flipper") {
+            enemy.flipTimer += deltaTime;
+            if (enemy.flipTimer > 2000 && Math.random() < 0.01) {
+              enemy.lane =
+                (enemy.lane + enemy.flipDirection + NUM_LANES) % NUM_LANES;
+              enemy.flipTimer = 0;
+              enemy.flipDirection = Math.random() < 0.5 ? -1 : 1;
+            }
+          }
+
+          // Spiker leaves spikes
+          if (enemy.type === "spiker" && enemy.depth < 0.9) {
+            const existingSpike = spikes.find((s) => s.lane === enemy.lane);
+            if (existingSpike) {
+              existingSpike.startDepth = Math.min(
+                existingSpike.startDepth,
+                enemy.depth
+              );
+            } else {
+              spikes.push({
+                lane: enemy.lane,
+                startDepth: enemy.depth,
+                endDepth: 1,
+              });
+            }
+          }
+
+          // Check if enemy reached player
+          if (enemy.depth <= 0.05 && enemy.lane === player.lane) {
+            enemies.splice(i, 1);
+            lives--;
+            livesDisplay.textContent = lives;
+
+            const pos = getPositionInLane(player.lane, 0);
+            createExplosion(pos.x, pos.y, "#ff0", 30);
+            playSound(150, 0.5, "sawtooth");
+
+            if (lives <= 0) {
+              gameState = "gameOver";
+              gameOverScreen.style.display = "block";
+            }
+            continue;
+          }
+
+          // Remove enemies that somehow went past
+          if (enemy.depth < 0) {
+            enemies.splice(i, 1);
+          }
+        }
+
+        // Bullet-enemy collision
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          const bullet = bullets[i];
+
+          for (let j = enemies.length - 1; j >= 0; j--) {
+            const enemy = enemies[j];
+
+            if (
+              bullet.lane === enemy.lane &&
+              Math.abs(bullet.depth - enemy.depth) < 0.05
+            ) {
+              const pos = getPositionInLane(enemy.lane, enemy.depth);
+
+              if (enemy.type === "tanker") {
+                // Tanker splits into two flippers
+                createExplosion(pos.x, pos.y, "#f0f", 20);
+                enemies.push({
+                  lane: (enemy.lane - 1 + NUM_LANES) % NUM_LANES,
+                  depth: enemy.depth,
+                  type: "flipper",
+                  speed: enemy.speed * 1.5,
+                  flipTimer: 0,
+                  flipDirection: -1,
+                });
+                enemies.push({
+                  lane: (enemy.lane + 1) % NUM_LANES,
+                  depth: enemy.depth,
+                  type: "flipper",
+                  speed: enemy.speed * 1.5,
+                  flipTimer: 0,
+                  flipDirection: 1,
+                });
+                score += 100;
+                playSound(200, 0.2, "square");
+              } else {
+                createExplosion(
+                  pos.x,
+                  pos.y,
+                  enemy.type === "spiker" ? "#0f0" : "#f00"
+                );
+                score += enemy.type === "spiker" ? 75 : 50;
+                playSound(300, 0.15, "square");
+              }
+
+              enemies.splice(j, 1);
+              bullets.splice(i, 1);
+              enemiesKilledThisLevel++;
+              scoreDisplay.textContent = score;
+              break;
+            }
+          }
+        }
+
+        // Check for spike collision with player at outer edge
+        for (let i = spikes.length - 1; i >= 0; i--) {
+          const spike = spikes[i];
+          if (spike.lane === player.lane && spike.startDepth <= 0.05) {
+            spikes.splice(i, 1);
+            lives--;
+            livesDisplay.textContent = lives;
+
+            const pos = getPositionInLane(player.lane, 0);
+            createExplosion(pos.x, pos.y, "#0f0", 20);
+            playSound(100, 0.3, "sawtooth");
+
+            if (lives <= 0) {
+              gameState = "gameOver";
+              gameOverScreen.style.display = "block";
+            }
+          }
+        }
+
+        // Update particles
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life -= 0.02;
+          p.vx *= 0.98;
+          p.vy *= 0.98;
+
+          if (p.life <= 0) {
+            particles.splice(i, 1);
+          }
+        }
+
+        // Level progression
+        if (enemiesKilledThisLevel >= enemiesPerLevel) {
+          level++;
+          levelDisplay.textContent = level;
+          enemiesKilledThisLevel = 0;
+          enemiesPerLevel += 5;
+          enemySpawnRate = Math.max(500, enemySpawnRate - 200);
+
+          // Clear spikes on level up
+          spikes.length = 0;
+
+          // Bonus points
+          score += level * 100;
+          scoreDisplay.textContent = score;
+
+          playSound(523, 0.1, "sine");
+          setTimeout(() => playSound(659, 0.1, "sine"), 100);
+          setTimeout(() => playSound(784, 0.2, "sine"), 200);
+        }
+      }
+
+      function render() {
+        // Clear canvas with trail effect
+        ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        drawTube();
+        drawSpikes();
+        drawBullets();
+        drawEnemies();
+        drawPlayer();
+        drawParticles();
+      }
+
+      function gameLoop(timestamp) {
+        if (gameState === "playing") {
+          const deltaTime = 16; // Approximate frame time
+          update(deltaTime);
+          render();
+        }
+
+        requestAnimationFrame(gameLoop);
+      }
+
+      function startGame() {
+        score = 0;
+        level = 1;
+        lives = 3;
+        player.lane = 0;
+        bullets = [];
+        enemies = [];
+        spikes = [];
+        particles = [];
+        lastEnemySpawn = Date.now();
+        enemySpawnRate = 2000;
+        enemiesKilledThisLevel = 0;
+        enemiesPerLevel = 10;
+
+        scoreDisplay.textContent = score;
+        levelDisplay.textContent = level;
+        livesDisplay.textContent = lives;
+
+        gameOverScreen.style.display = "none";
+        startScreen.style.display = "none";
+        gameState = "playing";
+      }
+
+      // Event listeners
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft") keys.left = true;
+        if (e.key === "ArrowRight") keys.right = true;
+        if (e.key === " ") {
+          e.preventDefault();
+          keys.space = true;
+
+          if (gameState === "start" || gameState === "gameOver") {
+            startGame();
+          }
+        }
+      });
+
+      document.addEventListener("keyup", (e) => {
+        if (e.key === "ArrowLeft") keys.left = false;
+        if (e.key === "ArrowRight") keys.right = false;
+        if (e.key === " ") keys.space = false;
+      });
+
+      // Initialize
+      calculateLaneGeometry();
+
+      // Initial render of tube
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      drawTube();
+
+      // Start game loop
+      requestAnimationFrame(gameLoop);
+    </script>
+  </body>
+</html>
