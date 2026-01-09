@@ -151,7 +151,7 @@
       let lastFireTime = 0;
       const fireRate = 150;
       let lastMoveTime = 0;
-      const moveRate = 80;
+      const moveRate = 120;
 
       // Lane geometry cache
       let laneGeometry = [];
@@ -438,7 +438,8 @@
           lane,
           depth: 1, // Start at inner edge
           type,
-          speed: 0.001 + level * 0.0003 + Math.random() * 0.001,
+          // Reduced speed: base 0.0003 (was 0.001), level scaling 0.0001 (was 0.0003), random 0.0002 (was 0.001)
+          speed: 0.0003 + level * 0.0001 + Math.random() * 0.0002,
           flipTimer: 0,
           flipDirection: Math.random() < 0.5 ? -1 : 1,
         });
