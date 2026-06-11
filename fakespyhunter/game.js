@@ -114,7 +114,145 @@ function generateRocketTexture(scene) {
   g.fillRect(5, 15, 2, 3);
   g.generateTexture('rocket', 12, 18);
 }
+let audioContext = null;
+let audioMasterGain = null;
 
+function initAudioContext() {
+  if (audioContext) return audioContext;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  audioContext = new AudioCtx();
+  // create a master gain so we can mute/unmute cleanly
+  try {
+    audioMasterGain = audioContext.createGain();
+    audioMasterGain.gain.setValueAtTime(1, audioContext.currentTime);
+    audioMasterGain.connect(audioContext.destination);
+  } catch (e) {
+    audioMasterGain = null;
+  }
+  return audioContext;
+}
+
+function noteToFrequency(note) {
+  const noteMap = {
+    C: 0, 'C#': 1, Db: 1, D: 2, 'D#': 3, Eb: 3,
+    E: 4, F: 5, 'F#': 6, Gb: 6, G: 7, 'G#': 8,
+    Ab: 8, A: 9, 'A#': 10, Bb: 10, B: 11,
+  };
+  const match = note.match(/^([A-G][#b]?)(\d)$/);
+  if (!match) return 440;
+  const pitch = match[1];
+  const octave = parseInt(match[2], 10);
+  const semitone = noteMap[pitch];
+  const midi = 12 + octave * 12 + semitone;
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+function playTone(frequency, duration = 0.12, type = 'square', volume = 0.16, startOffset = 0) {
+  const context = initAudioContext();
+  if (!context) return;
+  const now = context.currentTime + startOffset;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, now);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(volume, now + 0.01);
+  gain.gain.setValueAtTime(volume, now + duration * 0.8);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  if (audioMasterGain) oscillator.connect(gain).connect(audioMasterGain);
+  else oscillator.connect(gain).connect(context.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration + 0.02);
+}
+
+function playNoise(duration = 0.12, volume = 0.2) {
+  const context = initAudioContext();
+  if (!context) return;
+  const buffer = context.createBuffer(1, context.sampleRate * duration, context.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) {
+    data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+  }
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  const gain = context.createGain();
+  const now = context.currentTime;
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  if (audioMasterGain) source.connect(gain).connect(audioMasterGain);
+  else source.connect(gain).connect(context.destination);
+  source.start(now);
+  source.stop(now + duration + 0.02);
+}
+
+const MUSIC_PATTERN = [
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'G3', dur: 0.12 }, { note: 'G3', dur: 0.12 },
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'C3', dur: 0.24 },
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
+  { note: 'D3', dur: 0.12 }, { note: 'D3', dur: 0.12 },
+  { note: 'D3', dur: 0.12 }, { note: 'D3', dur: 0.12 },
+  { note: 'C3', dur: 0.12 }, { note: 'C3', dur: 0.12 },
+  { note: 'C3', dur: 0.12 }, { note: 'C3', dur: 0.12 },
+  { note: 'B2', dur: 0.24 },
+];
+
+function startMusic(scene) {
+  if (scene.musicEvent || !initAudioContext()) return;
+  scene.musicIndex = 0;
+  scene.musicEvent = scene.time.addEvent({
+    delay: 190,
+    loop: true,
+    callback: () => {
+      const part = MUSIC_PATTERN[scene.musicIndex];
+      if (part && part.note) {
+        playTone(noteToFrequency(part.note), part.dur, 'square', 0.14);
+      }
+      scene.musicIndex = (scene.musicIndex + 1) % MUSIC_PATTERN.length;
+    },
+  });
+}
+
+function startAudio(scene) {
+  if (scene.audioStarted) return;
+  scene.audioStarted = true;
+  const context = initAudioContext();
+  if (!context) return;
+  if (context.state === 'suspended') {
+    context.resume().then(() => startMusic(scene)).catch(() => startMusic(scene));
+  } else {
+    startMusic(scene);
+  }
+}
+
+function playSfx(key) {
+  const context = initAudioContext();
+  if (!context) return;
+  if (context.state === 'suspended') context.resume();
+  switch (key) {
+    case 'playerShoot':
+      playTone(1100, 0.08, 'square', 0.22);
+      break;
+    case 'enemyShoot':
+      playTone(760, 0.09, 'square', 0.18);
+      break;
+    case 'enemyRocket':
+      playTone(520, 0.18, 'triangle', 0.16);
+      playTone(300, 0.18, 'sawtooth', 0.12);
+      break;
+    case 'collision':
+      playNoise(0.12, 0.24);
+      break;
+    default:
+      break;
+  }
+}
 function generateEnemyTexture(scene) {
   const g = scene.make.graphics({ add: false });
   const w = ENEMY.w, h = ENEMY.h;
@@ -218,12 +356,12 @@ function generateCarTexture(scene) {
   g.fillRect(1, h - 16, 5, 8);
   g.fillRect(w - 6, h - 16, 5, 8);
 
-  g.fillStyle(0x222222);
+  g.fillStyle(0xcccccc);
   g.fillRect(6, 32, 20, 18);
   g.fillRect(4, 14, 24, 20);
   g.fillRect(7, 2, 18, 14);
 
-  g.fillStyle(0x2a2a2a);
+  g.fillStyle(0xffffff);
   g.fillRect(5, 30, 22, 20);
   g.fillRect(3, 12, 26, 20);
   g.fillRect(6, 1, 20, 14);
@@ -299,6 +437,17 @@ class GameScene extends Phaser.Scene {
     this.player = this.add.sprite(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'car');
     this.player.setOrigin(0.5, 0.5);
 
+    this.input.keyboard.once('keydown', () => startAudio(this));
+    
+    // Mute state and UI
+    this.muted = false;
+    this.muteButton = this.add.text(GAME_WIDTH - 10, 50, 'MUTE', {
+      fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', backgroundColor: '#222222', padding: { x: 6, y: 4 },
+    }).setOrigin(1, 0).setDepth(10).setInteractive();
+    this.muteButton.on('pointerdown', () => this.toggleMute());
+    const mKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+    mKey.on('down', () => this.toggleMute());
+
     this.cursors = this.input.keyboard.createCursorKeys();
     this.wasd = {
       W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
@@ -332,11 +481,86 @@ class GameScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '14px', color: '#ff4444',
     }).setOrigin(1, 0).setDepth(10);
 
+    this.score = 0;
+    this.scoreText = this.add.text(10, 10, 'SCORE: 0', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#ffff88',
+    }).setOrigin(0, 0).setDepth(10);
+
+    // Load persistent high scores (top 5) and normalize to {name,score}
+    let hs = [];
+    try {
+      const raw = localStorage.getItem('fakespyhunter_highscores');
+      if (raw) hs = JSON.parse(raw);
+    } catch (e) {
+      hs = [];
+    }
+    this.highScores = Array.isArray(hs) ? hs.map((it) => {
+      if (it == null) return { name: '---', score: 0 };
+      if (typeof it === 'number') return { name: '---', score: it };
+      if (typeof it === 'object' && typeof it.score === 'number') return { name: it.name || '---', score: it.score };
+      return { name: '---', score: 0 };
+    }) : [];
+
     this.updateHUD();
+
+    this.started = false;
+    this.startOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75).setDepth(20);
+    this.startTitle = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40, 'FAKE SPY HUNTER', {
+      fontFamily: 'monospace', fontSize: '32px', color: '#ffffff', align: 'center',
+    }).setOrigin(0.5).setDepth(21);
+    this.startHint = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20, 'PRESS SPACE TO START', {
+      fontFamily: 'monospace', fontSize: '18px', color: '#ffdd55', align: 'center',
+    }).setOrigin(0.5).setDepth(21);
+
+    const hsText = (this.highScores && this.highScores.length)
+      ? this.highScores.map((v, i) => `${i + 1}. ${v.name} ${v.score}`).join('\n')
+      : 'No high scores';
+    this.startHighText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60, hsText, {
+      fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', align: 'center',
+    }).setOrigin(0.5).setDepth(21);
+
+    this.input.keyboard.once('keydown-SPACE', () => {
+      this.startGame();
+    });
+
+    // Award 10 points per second while the game is running
+    this.scoreEvent = this.time.addEvent({
+      delay: 1000,
+      loop: true,
+      callback: () => {
+        if (this.started && !this.gameOver) {
+          this.score += 10;
+          this.updateHUD();
+        }
+      },
+    });
+  }
+
+  startGame() {
+    this.started = true;
+    this.startOverlay.destroy();
+    this.startTitle.destroy();
+    this.startHint.destroy();
+    if (this.startHighText) this.startHighText.destroy();
+    startAudio(this);
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    const ctx = initAudioContext();
+    if (audioMasterGain && ctx) {
+      try {
+        audioMasterGain.gain.setValueAtTime(this.muted ? 0.0001 : 1, ctx.currentTime);
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (this.muteButton) this.muteButton.setText(this.muted ? 'UNMUTE' : 'MUTE');
+  }
   }
 
   update(time, delta) {
-    if (this.gameOver) return;
+    if (!this.started || this.gameOver) return;
 
     const dt = delta / 1000;
 
@@ -377,6 +601,7 @@ class GameScene extends Phaser.Scene {
       b.setDepth(5);
       this.bullets.add(b);
       this.lastFired = time;
+      playSfx('playerShoot');
     }
 
     const bullets = this.bullets.getChildren();
@@ -441,6 +666,7 @@ class GameScene extends Phaser.Scene {
       const e = enemies[i];
       if (!e.active) continue;
       if (Phaser.Geom.Intersects.RectangleToRectangle(this.player.getBounds(), e.getBounds())) {
+        playSfx('collision');
         const dx = this.carX - e.x;
         const dy = this.carY - e.y;
         const len = Math.sqrt(dx * dx + dy * dy);
@@ -466,6 +692,10 @@ class GameScene extends Phaser.Scene {
         const e = enemies[j];
         if (!e.active) continue;
         if (Phaser.Geom.Intersects.RectangleToRectangle(b.getBounds(), e.getBounds())) {
+          playSfx('collision');
+          // award points for destroying an enemy
+          this.score = (this.score || 0) + 100;
+          this.updateHUD();
           this.explodeAt(e.x, e.y);
           b.destroy();
           e.destroy();
@@ -511,6 +741,7 @@ class GameScene extends Phaser.Scene {
     eb.setData('damage', isRocket ? 2 : 1);
     eb.setDepth(5);
     this.enemyBullets.add(eb);
+    playSfx(isRocket ? 'enemyRocket' : 'enemyShoot');
   }
 
   playerHit(damage) {
@@ -554,19 +785,72 @@ class GameScene extends Phaser.Scene {
     this.gameOver = true;
     this.player.setVisible(false);
 
+    // Prepare high score list and determine if this is a new top-5
+    const prev = Array.isArray(this.highScores) ? this.highScores.slice() : [];
+    const playerScore = this.score || 0;
+    prev.push({ name: '', score: playerScore });
+    prev.sort((a, b) => b.score - a.score);
+    const newIndex = prev.findIndex(p => p.name === '' && p.score === playerScore);
+    const top = prev.slice(0, 5);
+    this.highScores = top;
+
     this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75).setDepth(100);
     this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 'go_title').setDepth(101);
     this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, 'go_hint').setDepth(101);
 
-    this.input.keyboard.once('keydown-R', () => {
-      this.scene.restart();
-    });
+    if (newIndex !== -1 && newIndex < 5) {
+      // Collect initials for new high score
+      this.collectingInitials = true;
+      this.initials = '';
+      this.initialsText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100, 'ENTER INITIALS: ___', {
+        fontFamily: 'monospace', fontSize: '18px', color: '#ffdd55', align: 'center',
+      }).setOrigin(0.5).setDepth(102);
+
+      const handler = (event) => {
+        if (!this.collectingInitials) return;
+        const key = event.key;
+        if (key === 'Backspace') {
+          this.initials = this.initials.slice(0, -1);
+        } else if (key === 'Enter') {
+          if (this.initials.length === 0) return;
+          // finalize name and save
+          prev[newIndex].name = this.initials.padEnd(3).slice(0, 3);
+          const finalTop = prev.slice(0, 5);
+          this.highScores = finalTop;
+          try { localStorage.setItem('fakespyhunter_highscores', JSON.stringify(finalTop)); } catch (e) { /* ignore */ }
+          if (this.initialsText) this.initialsText.destroy();
+          const hsText = finalTop.length ? finalTop.map((v, i) => `${i + 1}. ${v.name} ${v.score}`).join('\n') : 'No high scores';
+          this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 140, hsText, {
+            fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', align: 'center',
+          }).setOrigin(0.5).setDepth(101);
+          this.input.keyboard.once('keydown-R', () => this.scene.restart());
+          this.input.keyboard.off('keydown', handler);
+          this.collectingInitials = false;
+        } else if (/^[a-zA-Z]$/.test(key) && this.initials.length < 3) {
+          this.initials += key.toUpperCase();
+        }
+        if (this.initialsText) this.initialsText.setText(`ENTER INITIALS: ${this.initials.padEnd(3, '_')}`);
+      };
+
+      this.input.keyboard.on('keydown', handler);
+    } else {
+      // Not a new high score - save list and show it
+      try { localStorage.setItem('fakespyhunter_highscores', JSON.stringify(top)); } catch (e) { /* ignore */ }
+      const hsText = top.length ? top.map((v, i) => `${i + 1}. ${v.name} ${v.score}`).join('\n') : 'No high scores';
+      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100, hsText, {
+        fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', align: 'center',
+      }).setOrigin(0.5).setDepth(101);
+      this.input.keyboard.once('keydown-R', () => {
+        this.scene.restart();
+      });
+    }
   }
 
   updateHUD() {
     this.livesText.setText(`LIVES: ${this.playerLives}`);
     const hpBar = '♥'.repeat(this.playerHP) + '♡'.repeat(PLAYER_MAX_HP - this.playerHP);
     this.hpText.setText(hpBar);
+    if (this.scoreText) this.scoreText.setText(`SCORE: ${this.score || 0}`);
   }
 
   explodeAt(x, y) {
