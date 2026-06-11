@@ -187,20 +187,11 @@ function playNoise(duration = 0.12, volume = 0.2) {
 }
 
 const MUSIC_PATTERN = [
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'G3', dur: 0.12 }, { note: 'G3', dur: 0.12 },
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'C3', dur: 0.24 },
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'E3', dur: 0.12 }, { note: 'E3', dur: 0.12 },
-  { note: 'D3', dur: 0.12 }, { note: 'D3', dur: 0.12 },
-  { note: 'D3', dur: 0.12 }, { note: 'D3', dur: 0.12 },
-  { note: 'C3', dur: 0.12 }, { note: 'C3', dur: 0.12 },
-  { note: 'C3', dur: 0.12 }, { note: 'C3', dur: 0.12 },
-  { note: 'B2', dur: 0.24 },
+   { note: 'F1', dur: 0.12 }, { note: 'F1', dur: 0.12 },
+  { note: 'G1', dur: 0.12 }, { note: 'F1', dur: 0.12 },
+  { note: 'G#1', dur: 0.12}, 
+  { note: 'F1', dur: 0.12 }, { note: 'B1', dur: 0.12 },
+  { note: 'A1', dur: 0.12 }, 
 ];
 
 function startMusic(scene) {
@@ -557,7 +548,7 @@ class GameScene extends Phaser.Scene {
     }
     if (this.muteButton) this.muteButton.setText(this.muted ? 'UNMUTE' : 'MUTE');
   }
-  }
+  
 
   update(time, delta) {
     if (!this.started || this.gameOver) return;
