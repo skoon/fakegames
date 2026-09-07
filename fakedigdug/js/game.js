@@ -435,7 +435,9 @@ class DigDugScene extends Phaser.Scene {
         if (idx === -1) return;
         this.score += e.type === 'pooka' ? 500 : 1000;
         this.enemySprs[idx].destroy();
+        // Both arrays are indexed in lockstep by updateEnemies, so they splice together.
         this.enemySprs.splice(idx, 1);
+        this.enemies.splice(idx, 1);
     }
 
     breatheFire(e) {
