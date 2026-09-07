@@ -103,6 +103,7 @@
         <div>LEVEL: <span id="level">1</span></div>
         <div>LIVES: <span id="lives">3</span></div>
         <div>ZAP: <span id="zap">2</span></div>
+        <div>WEB: <span id="web">CIRCLE</span></div>
       </div>
       <div id="startScreen">
         <h1>FAKE TEMPEST</h1>
@@ -133,6 +134,7 @@
       const levelDisplay = document.getElementById("level");
       const livesDisplay = document.getElementById("lives");
       const zapDisplay = document.getElementById("zap");
+      const webDisplay = document.getElementById("web");
       const gameOverScreen = document.getElementById("gameOver");
       const startScreen = document.getElementById("startScreen");
 
@@ -177,39 +179,185 @@
       let lastMoveTime = 0;
       const moveRate = 120;
 
-      // Lane geometry cache
-      let laneGeometry = [];
+      /* ---------------------------------------------------------- the webs ---
+       *
+       * Tempest is not one tube, it is sixteen. Some close on themselves and
+       * some do not, and an open web is a different game: you can be cornered
+       * at an end instead of running forever around a rim.
+       *
+       * A web is a list of corners in normalised space (-1..1, scaled by
+       * OUTER_RADIUS about the centre). Lanes are sampled evenly along that
+       * path, so every web gets the same lane count and the same difficulty.
+       * The hub is the rim scaled toward the centre, which is what gives the
+       * flat and V webs their sense of receding.
+       */
+      const HUB_RATIO = INNER_RADIUS / OUTER_RADIUS;
 
-      function calculateLaneGeometry() {
-        laneGeometry = [];
-        const angleStep = (Math.PI * 2) / NUM_LANES;
+      function at(nx, ny) {
+        return { x: CENTER_X + nx * OUTER_RADIUS, y: CENTER_Y + ny * OUTER_RADIUS };
+      }
 
-        for (let i = 0; i < NUM_LANES; i++) {
-          const angle1 = i * angleStep - Math.PI / 2;
-          const angle2 = (i + 1) * angleStep - Math.PI / 2;
+      /** Evenly spaces `count` points along a path of corners. */
+      function samplePath(corners, count, closed) {
+        const pts = closed ? corners.concat([corners[0]]) : corners;
 
-          laneGeometry.push({
-            angle1,
-            angle2,
-            centerAngle: (angle1 + angle2) / 2,
-            outer1: {
-              x: CENTER_X + Math.cos(angle1) * OUTER_RADIUS,
-              y: CENTER_Y + Math.sin(angle1) * OUTER_RADIUS,
-            },
-            outer2: {
-              x: CENTER_X + Math.cos(angle2) * OUTER_RADIUS,
-              y: CENTER_Y + Math.sin(angle2) * OUTER_RADIUS,
-            },
-            inner1: {
-              x: CENTER_X + Math.cos(angle1) * INNER_RADIUS,
-              y: CENTER_Y + Math.sin(angle1) * INNER_RADIUS,
-            },
-            inner2: {
-              x: CENTER_X + Math.cos(angle2) * INNER_RADIUS,
-              y: CENTER_Y + Math.sin(angle2) * INNER_RADIUS,
-            },
+        const segments = [];
+        let total = 0;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+          segments.push(d);
+          total += d;
+        }
+
+        // A closed path must not repeat its start; an open one must hit both ends.
+        const steps = closed ? count : count - 1;
+        const out = [];
+
+        for (let k = 0; k < count; k++) {
+          let travel = (k / steps) * total;
+          let i = 0;
+          while (i < segments.length - 1 && travel > segments[i]) {
+            travel -= segments[i];
+            i++;
+          }
+          const f = segments[i] === 0 ? 0 : travel / segments[i];
+          out.push({
+            x: pts[i].x + (pts[i + 1].x - pts[i].x) * f,
+            y: pts[i].y + (pts[i + 1].y - pts[i].y) * f,
           });
         }
+        return out;
+      }
+
+      function circleCorners(n) {
+        const corners = [];
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+          corners.push(at(Math.cos(a), Math.sin(a)));
+        }
+        return corners;
+      }
+
+      const WEBS = [
+        // The original: a closed ring, sampled the same way it always was.
+        { name: "CIRCLE", closed: true, corners: () => circleCorners(64) },
+
+        {
+          name: "SQUARE",
+          closed: true,
+          corners: () => [at(-0.9, -0.9), at(0.9, -0.9), at(0.9, 0.9), at(-0.9, 0.9)],
+        },
+
+        {
+          name: "CROSS",
+          closed: true,
+          corners: () => [
+            at(-0.32, -0.95), at(0.32, -0.95), at(0.32, -0.32), at(0.95, -0.32),
+            at(0.95, 0.32), at(0.32, 0.32), at(0.32, 0.95), at(-0.32, 0.95),
+            at(-0.32, 0.32), at(-0.95, 0.32), at(-0.95, -0.32), at(-0.32, -0.32),
+          ],
+        },
+
+        {
+          name: "STAR",
+          closed: true,
+          corners: () => {
+            const corners = [];
+            for (let i = 0; i < 10; i++) {
+              const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+              const r = i % 2 === 0 ? 1 : 0.45;
+              corners.push(at(Math.cos(a) * r, Math.sin(a) * r));
+            }
+            return corners;
+          },
+        },
+
+        // Open from here down - the player can be cornered at an end.
+        { name: "VEE", closed: false, corners: () => [at(-1, -0.7), at(0, 0.95), at(1, -0.7)] },
+
+        { name: "FLAT", closed: false, corners: () => [at(-1, 0.45), at(1, 0.45)] },
+
+        {
+          name: "HORSESHOE",
+          closed: false,
+          corners: () => [at(-0.9, -0.9), at(-0.9, 0.6), at(0.9, 0.6), at(0.9, -0.9)],
+        },
+      ];
+
+      // Lane geometry cache
+      let laneGeometry = [];
+      let rimPoints = [];
+      let hubPoints = [];
+      let outlinePoints = [];
+      let hubOutline = [];
+      let numLanes = NUM_LANES;
+      let webIndex = 0;
+
+      /** Pulls a rim point in toward the centre to sit on the hub. */
+      function toHub(p) {
+        return {
+          x: CENTER_X + (p.x - CENTER_X) * HUB_RATIO,
+          y: CENTER_Y + (p.y - CENTER_Y) * HUB_RATIO,
+        };
+      }
+
+      function currentWeb() {
+        return WEBS[webIndex % WEBS.length];
+      }
+
+      /** Moves a lane index, wrapping on a closed web and stopping on an open one. */
+      function stepLane(lane, delta) {
+        if (currentWeb().closed) {
+          return (lane + delta + numLanes) % numLanes;
+        }
+        return Math.max(0, Math.min(numLanes - 1, lane + delta));
+      }
+
+      function calculateLaneGeometry() {
+        const web = currentWeb();
+        const corners = web.corners();
+
+        // Lanes are sampled evenly, but the outline is drawn from the corners
+        // themselves - otherwise a 16-lane sample rounds the circle into a
+        // polygon and cuts the tips off the star.
+        outlinePoints = corners;
+        hubOutline = corners.map(toHub);
+
+        // A closed web needs one point per lane; an open one needs a point on
+        // each side of every lane, so one more.
+        rimPoints = samplePath(
+          corners,
+          web.closed ? NUM_LANES : NUM_LANES + 1,
+          web.closed
+        );
+        numLanes = web.closed ? rimPoints.length : rimPoints.length - 1;
+
+        hubPoints = rimPoints.map(toHub);
+
+        laneGeometry = [];
+        for (let i = 0; i < numLanes; i++) {
+          const j = web.closed ? (i + 1) % rimPoints.length : i + 1;
+          const outer1 = rimPoints[i];
+          const outer2 = rimPoints[j];
+          const inner1 = hubPoints[i];
+          const inner2 = hubPoints[j];
+
+          // Sprites point along the lane, from the hub out toward the rim.
+          const outMidX = (outer1.x + outer2.x) / 2;
+          const outMidY = (outer1.y + outer2.y) / 2;
+          const inMidX = (inner1.x + inner2.x) / 2;
+          const inMidY = (inner1.y + inner2.y) / 2;
+
+          laneGeometry.push({
+            outer1,
+            outer2,
+            inner1,
+            inner2,
+            centerAngle: Math.atan2(outMidY - inMidY, outMidX - inMidX),
+          });
+        }
+
+        if (player.lane >= numLanes) player.lane = numLanes - 1;
       }
 
       function getPositionInLane(lane, depth) {
@@ -226,46 +374,51 @@
         };
       }
 
+      function strokePath(points, closed) {
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) {
+          ctx.lineTo(points[i].x, points[i].y);
+        }
+        if (closed) ctx.closePath();
+        ctx.stroke();
+      }
+
       function drawTube() {
-        // Draw the tube lanes
+        // Lane dividers: one per rim point, so an open web draws both ends.
         ctx.strokeStyle = "#00f";
         ctx.lineWidth = 2;
-
-        for (let i = 0; i < NUM_LANES; i++) {
-          const geo = laneGeometry[i];
-
-          // Draw lane edges
+        for (let i = 0; i < rimPoints.length; i++) {
           ctx.beginPath();
-          ctx.moveTo(geo.outer1.x, geo.outer1.y);
-          ctx.lineTo(geo.inner1.x, geo.inner1.y);
+          ctx.moveTo(rimPoints[i].x, rimPoints[i].y);
+          ctx.lineTo(hubPoints[i].x, hubPoints[i].y);
           ctx.stroke();
-
-          // Highlight current lane
-          if (i === player.lane) {
-            ctx.fillStyle = "rgba(0, 255, 255, 0.15)";
-            ctx.beginPath();
-            ctx.moveTo(geo.outer1.x, geo.outer1.y);
-            ctx.lineTo(geo.outer2.x, geo.outer2.y);
-            ctx.lineTo(geo.inner2.x, geo.inner2.y);
-            ctx.lineTo(geo.inner1.x, geo.inner1.y);
-            ctx.closePath();
-            ctx.fill();
-          }
         }
+
+        // Highlight current lane
+        const here = laneGeometry[player.lane];
+        if (here) {
+          ctx.fillStyle = "rgba(0, 255, 255, 0.15)";
+          ctx.beginPath();
+          ctx.moveTo(here.outer1.x, here.outer1.y);
+          ctx.lineTo(here.outer2.x, here.outer2.y);
+          ctx.lineTo(here.inner2.x, here.inner2.y);
+          ctx.lineTo(here.inner1.x, here.inner1.y);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        const closed = currentWeb().closed;
 
         // Draw outer rim
         ctx.strokeStyle = "#0ff";
         ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(CENTER_X, CENTER_Y, OUTER_RADIUS, 0, Math.PI * 2);
-        ctx.stroke();
+        strokePath(outlinePoints, closed);
 
         // Draw inner rim
         ctx.strokeStyle = "#00f";
         ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(CENTER_X, CENTER_Y, INNER_RADIUS, 0, Math.PI * 2);
-        ctx.stroke();
+        strokePath(hubOutline, closed);
       }
 
       function drawPlayer() {
@@ -454,7 +607,7 @@
       }
 
       function spawnEnemy() {
-        const lane = Math.floor(Math.random() * NUM_LANES);
+        const lane = Math.floor(Math.random() * numLanes);
         const types = ["flipper", "flipper", "flipper", "tanker", "spiker"];
         const type = types[Math.floor(Math.random() * types.length)];
 
@@ -562,11 +715,11 @@
 
         // Player movement
         if (Arcade.Input.held("left") && now - lastMoveTime > moveRate) {
-          player.lane = (player.lane - 1 + NUM_LANES) % NUM_LANES;
+          player.lane = stepLane(player.lane, -1);
           lastMoveTime = now;
         }
         if (Arcade.Input.held("right") && now - lastMoveTime > moveRate) {
-          player.lane = (player.lane + 1) % NUM_LANES;
+          player.lane = stepLane(player.lane, 1);
           lastMoveTime = now;
         }
 
@@ -605,8 +758,7 @@
           if (enemy.type === "flipper") {
             enemy.flipTimer += deltaTime;
             if (enemy.flipTimer > 2000 && Math.random() < 0.01) {
-              enemy.lane =
-                (enemy.lane + enemy.flipDirection + NUM_LANES) % NUM_LANES;
+              enemy.lane = stepLane(enemy.lane, enemy.flipDirection);
               enemy.flipTimer = 0;
               enemy.flipDirection = Math.random() < 0.5 ? -1 : 1;
             }
@@ -665,7 +817,7 @@
               // destroyEnemy.
               if (enemy.type === "tanker") {
                 enemies.push({
-                  lane: (enemy.lane - 1 + NUM_LANES) % NUM_LANES,
+                  lane: stepLane(enemy.lane, -1),
                   depth: enemy.depth,
                   type: "flipper",
                   speed: enemy.speed * 1.5,
@@ -673,7 +825,7 @@
                   flipDirection: -1,
                 });
                 enemies.push({
-                  lane: (enemy.lane + 1) % NUM_LANES,
+                  lane: stepLane(enemy.lane, 1),
                   depth: enemy.depth,
                   type: "flipper",
                   speed: enemy.speed * 1.5,
@@ -732,6 +884,13 @@
           enemySpawnRate = Math.max(500, enemySpawnRate - 200);
           superzapper = SUPERZAPPER_CHARGES;
           zapDisplay.textContent = superzapper;
+
+          // Next level, next web. Enemies and spikes are cleared below, so
+          // nothing is left holding a lane index from the old shape.
+          webIndex = level - 1;
+          calculateLaneGeometry();
+          player.lane = 0;
+          webDisplay.textContent = currentWeb().name;
 
           // Clear spikes on level up
           spikes.length = 0;
@@ -800,6 +959,10 @@
         superzapper = SUPERZAPPER_CHARGES;
         zapDisplay.textContent = superzapper;
         lastFrameTime = 0;
+
+        webIndex = 0;
+        calculateLaneGeometry();
+        webDisplay.textContent = currentWeb().name;
 
         scoreDisplay.textContent = score;
         levelDisplay.textContent = level;

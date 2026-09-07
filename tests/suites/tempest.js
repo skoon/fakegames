@@ -287,3 +287,179 @@ suite("tempest: zapping an empty web wastes no charge", function () {
   check("charge is untouched with nothing to hit", superzapper === 2, "got " + superzapper);
   Arcade.Input._release("ShiftLeft");
 });
+
+/* ------------------------------------------------------------------- webs --- */
+
+function useWeb(name) {
+  startGame();
+  webIndex = WEBS.findIndex((w) => w.name === name);
+  calculateLaneGeometry();
+  player.lane = 0;
+  enemies.length = 0;
+  spikes.length = 0;
+}
+
+suite("tempest: every web has the same lane count", function () {
+  for (const web of WEBS) {
+    useWeb(web.name);
+    check(
+      web.name + " has " + NUM_LANES + " lanes",
+      numLanes === NUM_LANES,
+      "got " + numLanes
+    );
+    check(web.name + " built its geometry", laneGeometry.length === numLanes);
+  }
+});
+
+suite("tempest: web geometry stays on the canvas and is well formed", function () {
+  for (const web of WEBS) {
+    useWeb(web.name);
+
+    let bad = null;
+    for (let i = 0; i < numLanes; i++) {
+      const p = getPositionInLane(i, 0);
+      const q = getPositionInLane(i, 1);
+      if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.angle)) bad = "lane " + i + " is NaN";
+      if (p.x < -50 || p.x > canvas.width + 50) bad = "lane " + i + " off canvas at x=" + p.x;
+      if (p.y < -50 || p.y > canvas.height + 50) bad = "lane " + i + " off canvas at y=" + p.y;
+      // The hub end must be nearer the middle than the rim end.
+      const dRim = Math.hypot(p.x - CENTER_X, p.y - CENTER_Y);
+      const dHub = Math.hypot(q.x - CENTER_X, q.y - CENTER_Y);
+      if (dHub >= dRim) bad = "lane " + i + " hub is not inside the rim";
+    }
+    check(web.name + " geometry is sane", bad === null, bad);
+  }
+});
+
+suite("tempest: adjacent lanes are actually adjacent", function () {
+  for (const web of WEBS) {
+    useWeb(web.name);
+
+    // Neighbouring lanes must share an edge, so their rim midpoints are close.
+    let worst = 0;
+    for (let i = 0; i < numLanes - 1; i++) {
+      const a = getPositionInLane(i, 0);
+      const b = getPositionInLane(i + 1, 0);
+      worst = Math.max(worst, Math.hypot(b.x - a.x, b.y - a.y));
+    }
+    check(
+      web.name + " lanes sit next to each other",
+      worst < OUTER_RADIUS,
+      "biggest gap " + worst.toFixed(0)
+    );
+  }
+});
+
+suite("tempest: the circle web is unchanged from the original geometry", function () {
+  useWeb("CIRCLE");
+
+  // The original placed lane i between angles i*step and (i+1)*step, off -90deg.
+  const step = (Math.PI * 2) / NUM_LANES;
+  let worst = 0;
+  for (let i = 0; i < numLanes; i++) {
+    const angle = i * step - Math.PI / 2;
+    const expectX = CENTER_X + Math.cos(angle) * OUTER_RADIUS;
+    const expectY = CENTER_Y + Math.sin(angle) * OUTER_RADIUS;
+    worst = Math.max(
+      worst,
+      Math.hypot(laneGeometry[i].outer1.x - expectX, laneGeometry[i].outer1.y - expectY)
+    );
+  }
+  check("rim points land where they always did", worst < 0.5, "off by " + worst.toFixed(3));
+});
+
+suite("tempest: closed webs wrap, open webs do not", function () {
+  useWeb("CIRCLE");
+  check("closed web wraps backwards", stepLane(0, -1) === numLanes - 1, "got " + stepLane(0, -1));
+  check("closed web wraps forwards", stepLane(numLanes - 1, 1) === 0, "got " + stepLane(numLanes - 1, 1));
+
+  useWeb("FLAT");
+  check("open web stops at the left end", stepLane(0, -1) === 0, "got " + stepLane(0, -1));
+  check(
+    "open web stops at the right end",
+    stepLane(numLanes - 1, 1) === numLanes - 1,
+    "got " + stepLane(numLanes - 1, 1)
+  );
+  check("open web still moves inside", stepLane(5, 1) === 6);
+});
+
+suite("tempest: the player cannot walk off the end of an open web", function () {
+  useWeb("VEE");
+  Arcade.Input.reset();
+  Arcade.Shell._reset();
+
+  player.lane = 0;
+  Arcade.Input._press("ArrowLeft");
+  for (let i = 0; i < 10; i++) {
+    lastMoveTime = 0;
+    update(16);
+  }
+  check("held at the left end", player.lane === 0, "lane " + player.lane);
+  Arcade.Input._release("ArrowLeft");
+
+  player.lane = numLanes - 1;
+  Arcade.Input._press("ArrowRight");
+  for (let i = 0; i < 10; i++) {
+    lastMoveTime = 0;
+    update(16);
+  }
+  check("held at the right end", player.lane === numLanes - 1, "lane " + player.lane);
+  Arcade.Input._release("ArrowRight");
+});
+
+suite("tempest: flippers do not teleport across an open web", function () {
+  useWeb("FLAT");
+
+  spawnEnemy();
+  const e = enemies[0];
+  e.type = "flipper";
+  e.lane = 0;
+  e.flipDirection = -1;
+
+  // Force the flip regardless of its random gate.
+  e.lane = stepLane(e.lane, e.flipDirection);
+  check("a flipper at the end stays put", e.lane === 0, "lane " + e.lane);
+
+  e.lane = numLanes - 1;
+  e.flipDirection = 1;
+  e.lane = stepLane(e.lane, e.flipDirection);
+  check("and the same at the other end", e.lane === numLanes - 1, "lane " + e.lane);
+});
+
+suite("tempest: a tanker splitting at the end of an open web stays in bounds", function () {
+  useWeb("HORSESHOE");
+
+  bullets.length = 0;
+  spawnEnemy();
+  const t = enemies[0];
+  t.type = "tanker";
+  t.lane = 0;
+  t.depth = 0.5;
+  bullets.push({ lane: 0, depth: 0.5, speed: 0.02 });
+
+  update(16);
+
+  let bad = null;
+  for (const e of enemies) {
+    if (e.lane < 0 || e.lane >= numLanes) bad = "lane " + e.lane;
+  }
+  check("every split flipper is on a real lane", bad === null, bad);
+  check("the tanker did split", enemies.length >= 2, "got " + enemies.length);
+});
+
+suite("tempest: each level moves to the next web", function () {
+  startGame();
+  check("starts on the circle", currentWeb().name === "CIRCLE", currentWeb().name);
+  check("HUD says so", webDisplay.textContent === "CIRCLE", webDisplay.textContent);
+
+  const first = currentWeb().name;
+  enemies.length = 0;
+  enemiesKilledThisLevel = enemiesPerLevel;
+  update(16);
+
+  check("level advanced", level === 2, "level " + level);
+  check("the web changed", currentWeb().name !== first, currentWeb().name);
+  check("HUD followed", webDisplay.textContent === currentWeb().name);
+  check("geometry was rebuilt", laneGeometry.length === numLanes);
+  check("the player is on a valid lane", player.lane >= 0 && player.lane < numLanes);
+});

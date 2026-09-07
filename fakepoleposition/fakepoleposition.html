@@ -151,6 +151,23 @@
         text-align: right;
       }
 
+      .countdown-clock {
+        position: absolute;
+        top: 64px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 56px;
+        color: var(--neon-green);
+        text-shadow: 4px 4px 0 #000, 0 0 24px var(--neon-green);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .countdown-clock.low {
+        color: var(--neon-red);
+        text-shadow: 4px 4px 0 #000, 0 0 24px var(--neon-red);
+        animation: pulse 0.5s infinite;
+      }
+
       .center-message {
         position: absolute;
         top: 50%;
@@ -310,11 +327,13 @@
       <div class="ui-layer" id="gameUI">
         <div class="hud-top">
           <div class="hud-score">LAP <span id="lapVal">1</span>/3</div>
-          <div class="hud-time">TIME <span id="timeVal">0.00</span></div>
+          <div class="hud-time">LAP TIME <span id="timeVal">0.00</span></div>
+          <div class="hud-score">SCORE <span id="scoreVal">0</span></div>
           <div class="hud-best">BEST <span id="bestVal">--</span></div>
         </div>
         <div class="center-message" id="message">CRASH!</div>
         <div class="countdown" id="countdown"></div>
+        <div class="countdown-clock" id="raceClock">90</div>
         <div class="hud-speed"><span id="speedVal">0</span> km/h</div>
         <div class="results" id="results"></div>
       </div>
@@ -324,6 +343,8 @@
         <div class="press-start" onclick="startGame()">
           INSERT COIN TO START
         </div>
+
+        <pre id="highScores" style="color: #ff0; font-family: 'Share Tech Mono', monospace; font-size: 14px; line-height: 1.6; margin-top: 24px"></pre>
 
         <div class="controls-hint">
           <span class="key">↑</span> ACCELERATE &nbsp;
@@ -402,6 +423,31 @@
       let raceStarted = false;
 
       // Lap tracking
+      /* ------------------------------------------------ the countdown ---
+       *
+       * Pole Position is a race against a clock, not just against cars. You
+       * start with a fixed number of seconds and buy more by getting round the
+       * lap. Run out and the game ends where you stand - which is a different
+       * ending from crossing the line, and gets a different panel.
+       *
+       * Laps stay as the win condition, which is how the arcade works too: the
+       * clock can end you early, but finishing the distance is what wins.
+       */
+      const RACE_START_TIME = 90; // seconds on the clock at the green flag
+      const LAP_EXTENSION = 30; // seconds bought by getting round
+      const LOW_TIME_WARNING = 10;
+
+      // Scoring, which this cabinet has never had. Distance pays as you drive,
+      // laps pay a lump, and whatever is left on the clock pays out at the end.
+      const SCORE_PER_UNIT = 0.0006;
+      const LAP_BONUS = 1000;
+      const TIME_BONUS_PER_SEC = 200;
+
+      const GAME_KEY = "poleposition";
+      let raceTime = RACE_START_TIME;
+      let score = 0;
+      let finishReason = "finish"; // or "timeup"
+
       const TOTAL_LAPS = 3;
       let playerLap = 1;
       let playerLapTimes = [];
@@ -578,6 +624,11 @@
         countdownValue = 3;
         countdownTimer = 1;
         playerLap = 1;
+        raceTime = RACE_START_TIME;
+        score = 0;
+        finishReason = "finish";
+        document.getElementById("raceClock").classList.remove("low");
+        document.getElementById("raceClock").innerText = RACE_START_TIME;
         playerLapTimes = [];
         playerBestLap = null;
         playerLastZ = 0;
@@ -592,12 +643,25 @@
 
       // The track keeps rendering behind the results panel, so the race ends by
       // freezing the sim rather than by tearing the world down.
-      function finishRace() {
+      /** `reason` is "finish" when the distance is done, "timeup" when it is not. */
+      function finishRace(reason) {
+        if (raceFinished) return;
+
+        finishReason = reason || "finish";
         raceFinished = true;
         speed = 0;
         Sound.stopEngine();
         Sound.stopMusic();
 
+        // Whatever is left on the clock only pays out if you got there.
+        let timeBonus = 0;
+        if (finishReason === "finish") {
+          timeBonus = Math.floor(raceTime) * TIME_BONUS_PER_SEC;
+          score += timeBonus;
+        }
+        updateHud();
+
+        const won = finishReason === "finish";
         const rows = playerLapTimes
           .map((t, i) => "LAP " + (i + 1) + "&nbsp;&nbsp;" + t.toFixed(2))
           .join("<br />");
@@ -605,15 +669,46 @@
 
         const results = document.getElementById("results");
         results.innerHTML =
-          "<h2>FINISH</h2>" +
+          "<h2>" + (won ? "FINISH" : "TIME UP") + "</h2>" +
           '<div class="result-rows">' +
-          rows +
+          (rows || "NO LAPS COMPLETED") +
           "</div>" +
-          '<div class="result-best">BEST LAP ' +
-          best +
-          "</div>" +
+          '<div class="result-best">BEST LAP ' + best + "</div>" +
+          (timeBonus
+            ? '<div class="result-best">TIME BONUS ' + timeBonus + "</div>"
+            : "") +
+          '<div class="result-best">SCORE ' + Math.floor(score) + "</div>" +
           '<div class="result-restart">PRESS R TO RACE AGAIN</div>';
         results.style.display = "flex";
+        results.style.borderColor = won ? "var(--neon-orange)" : "var(--neon-red)";
+
+        const total = Math.floor(score);
+        if (Arcade.Scores.qualifies(GAME_KEY, total)) {
+          Arcade.Scores.promptInitials(total, (initials) => {
+            Arcade.Scores.submit(GAME_KEY, initials, total);
+            renderScores();
+          });
+        }
+        renderScores();
+      }
+
+      function renderScores() {
+        const el = document.getElementById("highScores");
+        if (el) el.textContent = Arcade.Scores.format(GAME_KEY);
+      }
+
+      /** Runs the race clock down and ends the game when it empties. */
+      function updateRaceClock(dt) {
+        raceTime -= dt;
+
+        const clock = document.getElementById("raceClock");
+        clock.innerText = Math.max(0, Math.ceil(raceTime));
+        clock.classList.toggle("low", raceTime <= LOW_TIME_WARNING);
+
+        if (raceTime <= 0) {
+          raceTime = 0;
+          finishRace("timeup");
+        }
       }
 
       function crash(car) {
@@ -663,6 +758,11 @@
 
         gameTime += dt;
         document.getElementById("timeVal").innerText = gameTime.toFixed(2);
+        updateRaceClock(dt);
+        if (raceFinished) return;
+
+        // Distance pays as you drive.
+        score += speed * dt * SCORE_PER_UNIT;
 
         if (isCrashed) {
           crashTimer -= dt;
@@ -741,9 +841,15 @@
             }
 
             playerLap++;
+            score += LAP_BONUS;
+
             if (playerLap > TOTAL_LAPS) {
-              finishRace();
+              finishRace("finish");
             } else {
+              // Getting round buys you more clock.
+              raceTime += LAP_EXTENSION;
+              Sound.playBeep(880);
+
               // Show lap complete message briefly
               document.getElementById("countdown").style.display = "block";
               document.getElementById("countdown").innerText =
@@ -1177,6 +1283,7 @@
 
       function updateHud() {
         document.getElementById("speedVal").innerText = Math.floor(speed / 100);
+        document.getElementById("scoreVal").innerText = Math.floor(score);
         document.getElementById("lapVal").innerText = Math.min(
           playerLap,
           TOTAL_LAPS
@@ -1189,13 +1296,14 @@
 
       // Update Init to allow audio context start
       Arcade.Shell.init({
-        game: "poleposition",
+        game: GAME_KEY,
         onPause: () => Sound.stopEngine(),
         onResume: () => {
           if (raceStarted && !raceFinished && !isCrashed) Sound.startEngine();
         },
       });
 
+      renderScores();
       window.onload = init;
 
       // Hook up Engine Sound in Update

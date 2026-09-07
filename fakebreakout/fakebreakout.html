@@ -125,7 +125,8 @@
         <h1 class="text-5xl font-black mb-6 text-blue-500 italic">BREAKOUT</h1>
         <div class="space-y-2 text-gray-300">
           <p>Move: <span class="text-white font-bold">Arrow Keys</span></p>
-          <p>Launch: <span class="text-white font-bold">Space Bar</span></p>
+          <p>Launch / Fire: <span class="text-white font-bold">Space Bar</span></p>
+          <p class="text-sm text-gray-400">Catch the drops: W wide &middot; M multiball &middot; L laser &middot; C catch &middot; S slow</p>
           <p class="text-sm text-gray-400">P Pause &middot; M Mute &middot; ESC Arcade</p>
         </div>
         <pre class="high-scores mt-4 text-yellow-400 text-sm leading-6"></pre>
@@ -197,7 +198,6 @@
       let lives = 3;
       let currentLevel = 1;
       let gameActive = false;
-      let ballActive = false;
       const GAME_KEY = "breakout";
 
       // Breakout was the only silent cabinet. Pitch rises toward the top rows,
@@ -218,6 +218,14 @@
         },
         lost() {
           Arcade.Audio.noise({ duration: 0.5, volume: 0.35, filterFrom: 800, filterTo: 80 });
+        },
+        powerup() {
+          [520, 780].forEach((f, i) =>
+            Arcade.Audio.tone(f, { duration: 0.09, delay: i * 0.07, type: "square", volume: 0.2 })
+          );
+        },
+        laser() {
+          Arcade.Audio.tone(1400, { slideTo: 600, duration: 0.06, type: "square", volume: 0.14 });
         },
         levelUp() {
           [523, 659, 784].forEach((f, i) =>
@@ -271,25 +279,74 @@
       };
 
       // Paddle: 3 blocks wide, 1 block height, 1 block above bottom
+      const PADDLE_WIDTH = BLOCK_SIZE * 3;
+      const PADDLE_WIDE = BLOCK_SIZE * 5;
+
       const paddle = {
-        width: BLOCK_SIZE * 3,
+        width: PADDLE_WIDTH,
         height: BLOCK_SIZE,
-        x: (CANVAS_WIDTH - BLOCK_SIZE * 3) / 2,
+        x: (CANVAS_WIDTH - PADDLE_WIDTH) / 2,
         y: (GRID_HEIGHT - 2) * BLOCK_SIZE,
         speed: 10,
         color: "#00d4ff", // Light Blue
       };
-      const HALF_PADDLE_WIDTH = paddle.width / 2;
 
-      const ball = {
-        x: 0,
-        y: 0,
-        radius: 7,
-        dx: 0,
-        dy: 0,
-        speed: 8,
-        color: "#ffffff",
-      };
+      /* ------------------------------------------------------------ balls ---
+       *
+       * There is no longer one ball. Multiball is the whole point of the
+       * power-up drop, and a single mutable `ball` cannot express it, so the
+       * game keeps a list. A ball parked on the paddle waiting for launch is
+       * `stuck` rather than a separate ballActive flag.
+       */
+      const BALL_RADIUS = 7;
+      const BALL_SPEED = 8;
+      const MAX_BALLS = 8;
+
+      let balls = [];
+
+      function makeBall(x, y, dx, dy, stuck) {
+        return {
+          x: x,
+          y: y,
+          dx: dx,
+          dy: dy,
+          radius: BALL_RADIUS,
+          speed: BALL_SPEED,
+          stuck: !!stuck,
+        };
+      }
+
+      /** True once at least one ball is loose. */
+      function ballsInPlay() {
+        return balls.some((b) => !b.stuck);
+      }
+
+      /* -------------------------------------------------------- power-ups ---
+       *
+       * Bricks occasionally drop one. Catch it with the paddle. Everything but
+       * multiball is a timed effect, counted in frames because this game's loop
+       * has always been frame-paced rather than delta-paced.
+       */
+      const DROP_CHANCE = 0.16;
+      const DROP_SPEED = 3.2;
+      const DROP_SIZE = 18;
+      const EFFECT_FRAMES = 10 * 60; // ten seconds
+      const SLOW_FACTOR = 0.62;
+      const LASER_SPEED = 12;
+      const LASER_COOLDOWN = 12; // frames
+
+      const POWERUPS = [
+        { key: "wide", label: "W", color: "#22c55e", name: "WIDE" },
+        { key: "multi", label: "M", color: "#f97316", name: "MULTIBALL" },
+        { key: "laser", label: "L", color: "#ef4444", name: "LASER" },
+        { key: "catch", label: "C", color: "#a855f7", name: "CATCH" },
+        { key: "slow", label: "S", color: "#38bdf8", name: "SLOW" },
+      ];
+
+      let drops = [];
+      let lasers = [];
+      let laserCooldown = 0;
+      let effects = { wide: 0, laser: 0, catch: 0, slow: 0 };
 
       function generateRandomLayout() {
         const rows = Math.floor(Math.random() * 6) + 4; // 4 to 9 rows
@@ -386,6 +443,7 @@
         lives = 3;
         updateUI();
         createBlocks();
+        clearPowerups();
         resetBall();
         requestAnimationFrame(update);
       }
@@ -394,7 +452,7 @@
         currentLevel++;
         gameActive = false;
         Sound.levelUp();
-        ballActive = false;
+        clearPowerups();
 
         // Show brief "Level Complete" message or just transition
         // For now, instant transition with a small delay could be nice,
@@ -422,27 +480,114 @@
       }
 
       function resetBall() {
-        ballActive = false;
-        ball.x = paddle.x + paddle.width / 2;
-        ball.y = paddle.y - ball.radius;
-        ball.dx = 0;
-        ball.dy = 0;
-        ball.dy = 0;
+        balls = [
+          makeBall(paddle.x + paddle.width / 2, paddle.y - BALL_RADIUS, 0, 0, true),
+        ];
         launchHint.style.display = "block";
       }
 
+      /** Launches every ball currently parked on the paddle. */
       function launchBall() {
-        if (!ballActive && gameActive) {
-          ballActive = true;
+        if (!gameActive) return false;
+
+        let launched = false;
+        for (const ball of balls) {
+          if (!ball.stuck) continue;
+
           // Launch upward at a random angle
           const angle = (Math.random() * 60 + 60) * (Math.PI / 180); // 60 to 120 degrees
-          ball.dx =
-            Math.cos(angle) * ball.speed * (Math.random() > 0.5 ? 1 : -1);
-          ball.dx =
-            Math.cos(angle) * ball.speed * (Math.random() > 0.5 ? 1 : -1);
+          ball.dx = Math.cos(angle) * ball.speed * (Math.random() > 0.5 ? 1 : -1);
           ball.dy = -Math.abs(Math.sin(angle) * ball.speed);
-          launchHint.style.display = "none";
+          ball.stuck = false;
+          launched = true;
         }
+
+        if (launched) launchHint.style.display = "none";
+        return launched;
+      }
+
+      /* ---------- power-up plumbing ---------- */
+
+      function clearPowerups() {
+        drops = [];
+        lasers = [];
+        laserCooldown = 0;
+        effects = { wide: 0, laser: 0, catch: 0, slow: 0 };
+        setPaddleWidth(PADDLE_WIDTH);
+      }
+
+      function setPaddleWidth(width) {
+        const centre = paddle.x + paddle.width / 2;
+        paddle.width = width;
+        paddle.x = Math.max(
+          0,
+          Math.min(CANVAS_WIDTH - width, centre - width / 2)
+        );
+      }
+
+      function maybeDropPowerup(x, y) {
+        if (Math.random() > DROP_CHANCE) return;
+        const pick = POWERUPS[Math.floor(Math.random() * POWERUPS.length)];
+        drops.push({ x: x, y: y, kind: pick.key, label: pick.label, color: pick.color });
+      }
+
+      function applyPowerup(kind) {
+        Sound.powerup();
+
+        if (kind === "multi") {
+          // Each loose ball becomes three, up to a sane ceiling.
+          const loose = balls.filter((b) => !b.stuck);
+          const source = loose.length ? loose : balls;
+          for (const ball of source) {
+            for (const turn of [0.5, -0.5]) {
+              if (balls.length >= MAX_BALLS) break;
+              const cos = Math.cos(turn);
+              const sin = Math.sin(turn);
+              const dx = ball.dx || 0;
+              const dy = ball.dy || -ball.speed;
+              balls.push(
+                makeBall(ball.x, ball.y, dx * cos - dy * sin, dx * sin + dy * cos, false)
+              );
+            }
+          }
+          return;
+        }
+
+        if (kind === "wide") setPaddleWidth(PADDLE_WIDE);
+        effects[kind] = EFFECT_FRAMES;
+      }
+
+      function updateEffects() {
+        for (const key of Object.keys(effects)) {
+          if (effects[key] > 0) effects[key]--;
+        }
+        if (effects.wide === 0 && paddle.width !== PADDLE_WIDTH) {
+          setPaddleWidth(PADDLE_WIDTH);
+        }
+        if (laserCooldown > 0) laserCooldown--;
+      }
+
+      function fireLasers() {
+        if (effects.laser <= 0 || laserCooldown > 0) return;
+        laserCooldown = LASER_COOLDOWN;
+        lasers.push({ x: paddle.x + 6, y: paddle.y });
+        lasers.push({ x: paddle.x + paddle.width - 6, y: paddle.y });
+        Sound.laser();
+      }
+
+      /** Destroys a block and pays for it. Shared by ball hits and lasers. */
+      function breakBlock(block) {
+        block.active = false;
+        score += 20;
+        updateUI();
+        Sound.brick(block.row);
+        createParticles(
+          block.x + block.width / 2,
+          block.y + block.height / 2,
+          block.color
+        );
+        maybeDropPowerup(block.x + block.width / 2, block.y + block.height / 2);
+        triggerShake();
       }
 
       function createParticles(x, y, color) {
@@ -503,7 +648,12 @@
           return;
         }
 
-        if (Arcade.Input.justPressed("fire")) launchBall();
+        // Fire either launches parked balls or shoots, never both.
+        if (Arcade.Input.justPressed("fire")) {
+          if (!launchBall()) fireLasers();
+        }
+
+        updateEffects();
 
         // Move Paddle
         if (Arcade.Input.held("left") && paddle.x > 0) {
@@ -516,9 +666,20 @@
           paddle.x += paddle.speed;
         }
 
-        if (ballActive) {
-          ball.x += ball.dx;
-          ball.y += ball.dy;
+        const speedScale = effects.slow > 0 ? SLOW_FACTOR : 1;
+
+        for (let b = balls.length - 1; b >= 0; b--) {
+          const ball = balls[b];
+
+          if (ball.stuck) {
+            // Parked on the paddle, waiting to be launched.
+            ball.x = paddle.x + paddle.width / 2;
+            ball.y = paddle.y - ball.radius;
+            continue;
+          }
+
+          ball.x += ball.dx * speedScale;
+          ball.y += ball.dy * speedScale;
 
           /**
            * WALL BOUNCING
@@ -552,61 +713,99 @@
             ball.x > paddle.x &&
             ball.x < paddle.x + paddle.width
           ) {
-            ball.dy = -Math.abs(ball.dy); // Ensure it always goes up
             Sound.paddle();
-            // Adjust horizontal velocity based on where it hit the paddle
-            let hitPoint =
-              (ball.x - (paddle.x + HALF_PADDLE_WIDTH)) / HALF_PADDLE_WIDTH;
-            ball.dx = hitPoint * ball.speed;
+
+            if (effects.catch > 0) {
+              // Sticky paddle: hold the ball until the player launches again.
+              ball.stuck = true;
+              ball.dx = 0;
+              ball.dy = 0;
+              launchHint.style.display = "block";
+            } else {
+              ball.dy = -Math.abs(ball.dy); // Ensure it always goes up
+              // Adjust horizontal velocity based on where it hit the paddle
+              const half = paddle.width / 2;
+              const hitPoint = (ball.x - (paddle.x + half)) / half;
+              ball.dx = hitPoint * ball.speed;
+            }
           }
 
           // Block Collision
-          let activeBlocksFound = false;
           for (let i = 0; i < blocks.length; i++) {
             const block = blocks[i];
-            if (block.active) {
-              activeBlocksFound = true;
-              if (
-                ball.x + ball.radius > block.x &&
-                ball.x - ball.radius < block.x + block.width &&
-                ball.y + ball.radius > block.y &&
-                ball.y - ball.radius < block.y + block.height
-              ) {
-                block.active = false;
-                ball.dy *= -1;
-                score += 20;
-                Sound.brick(block.row);
-                updateUI();
-                createParticles(
-                  block.x + block.width / 2,
-                  block.y + block.height / 2,
-                  block.color
-                );
-                triggerShake();
-                break;
-              }
+            if (!block.active) continue;
+            if (
+              ball.x + ball.radius > block.x &&
+              ball.x - ball.radius < block.x + block.width &&
+              ball.y + ball.radius > block.y &&
+              ball.y - ball.radius < block.y + block.height
+            ) {
+              ball.dy *= -1;
+              breakBlock(block);
+              break;
             }
           }
 
-          if (!activeBlocksFound) {
-            nextLevel();
+          // Lost down the bottom. The life only goes when the last one does.
+          if (ball.y - ball.radius > CANVAS_HEIGHT) balls.splice(b, 1);
+        }
+
+        // Falling power-ups
+        for (let i = drops.length - 1; i >= 0; i--) {
+          const drop = drops[i];
+          drop.y += DROP_SPEED;
+
+          const caught =
+            drop.y + DROP_SIZE / 2 > paddle.y &&
+            drop.y - DROP_SIZE / 2 < paddle.y + paddle.height &&
+            drop.x > paddle.x &&
+            drop.x < paddle.x + paddle.width;
+
+          if (caught) {
+            applyPowerup(drop.kind);
+            drops.splice(i, 1);
+          } else if (drop.y - DROP_SIZE > CANVAS_HEIGHT) {
+            drops.splice(i, 1);
+          }
+        }
+
+        // Laser bolts
+        for (let i = lasers.length - 1; i >= 0; i--) {
+          const shot = lasers[i];
+          shot.y -= LASER_SPEED;
+
+          if (shot.y < 0) {
+            lasers.splice(i, 1);
+            continue;
           }
 
-          // Lose Life (Passes bottom)
-          if (ball.y - ball.radius > CANVAS_HEIGHT) {
-            Sound.lost();
-            lives--;
-            updateUI();
-            if (lives <= 0) {
-              showGameOver(false);
-            } else {
-              resetBall();
+          for (const block of blocks) {
+            if (!block.active) continue;
+            if (
+              shot.x > block.x &&
+              shot.x < block.x + block.width &&
+              shot.y > block.y &&
+              shot.y < block.y + block.height
+            ) {
+              breakBlock(block);
+              lasers.splice(i, 1);
+              break;
             }
           }
-        } else {
-          // Ball follows paddle before launch
-          ball.x = paddle.x + paddle.width / 2;
-          ball.y = paddle.y - ball.radius;
+        }
+
+        if (!blocks.some((block) => block.active)) {
+          nextLevel();
+        } else if (balls.length === 0) {
+          Sound.lost();
+          lives--;
+          updateUI();
+          if (lives <= 0) {
+            showGameOver(false);
+          } else {
+            clearPowerups();
+            resetBall();
+          }
         }
 
         // Particles
@@ -643,21 +842,64 @@
           }
         }
 
-        // Draw Paddle
-        ctx.fillStyle = paddle.color;
+        // Draw Paddle. Laser gunports show when the paddle is armed.
+        ctx.fillStyle = effects.laser > 0 ? "#ef4444" : paddle.color;
         ctx.shadowBlur = 15;
-        ctx.shadowColor = paddle.color;
+        ctx.shadowColor = ctx.fillStyle;
         ctx.beginPath();
         ctx.roundRect(paddle.x, paddle.y, paddle.width, paddle.height, 4);
         ctx.fill();
 
-        // Draw Ball (reuse shadow blur but change color)
-        ctx.fillStyle = ball.color;
+        if (effects.laser > 0) {
+          ctx.fillStyle = "#fff5f5";
+          ctx.fillRect(paddle.x + 4, paddle.y - 5, 4, 6);
+          ctx.fillRect(paddle.x + paddle.width - 8, paddle.y - 5, 4, 6);
+        }
+
+        // Draw Balls
+        ctx.fillStyle = "#ffffff";
         ctx.shadowColor = "white";
-        ctx.beginPath();
-        ctx.arc(ball.x, ball.y, ball.radius, 0, TWO_PI);
-        ctx.fill();
+        for (const ball of balls) {
+          ctx.beginPath();
+          ctx.arc(ball.x, ball.y, ball.radius, 0, TWO_PI);
+          ctx.fill();
+        }
         ctx.shadowBlur = 0;
+
+        // Draw laser bolts
+        ctx.fillStyle = "#ff6b6b";
+        for (const shot of lasers) {
+          ctx.fillRect(shot.x - 2, shot.y - 12, 4, 12);
+        }
+
+        // Draw falling power-ups
+        ctx.font = "bold 13px 'Segoe UI', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        for (const drop of drops) {
+          ctx.fillStyle = drop.color;
+          ctx.beginPath();
+          ctx.roundRect(
+            drop.x - DROP_SIZE / 2,
+            drop.y - DROP_SIZE / 2,
+            DROP_SIZE,
+            DROP_SIZE,
+            4
+          );
+          ctx.fill();
+          ctx.fillStyle = "#0b1220";
+          ctx.fillText(drop.label, drop.x, drop.y + 1);
+        }
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+
+        // Active effects, bottom-left
+        const running = POWERUPS.filter((p) => effects[p.key] > 0);
+        ctx.font = "bold 12px 'Segoe UI', sans-serif";
+        running.forEach((p, i) => {
+          ctx.fillStyle = p.color;
+          ctx.fillText(p.name, 8, CANVAS_HEIGHT - 10 - i * 15);
+        });
 
         // Draw Particles
         for (let p of particles) {
