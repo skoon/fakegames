@@ -205,3 +205,85 @@ suite("tempest: the last life can only end the game once", function () {
   const table = Arcade.Scores.top("tempest");
   check("the score is recorded once", table.length === 1, JSON.stringify(table));
 });
+
+suite("tempest: the superzapper clears the web, then takes one more", function () {
+  startGame();
+  Arcade.Input.reset();
+  Arcade.Shell._reset();
+
+  check("starts with two charges", superzapper === 2, "got " + superzapper);
+
+  enemies.length = 0;
+  spikes.length = 0;
+  for (let i = 0; i < 5; i++) {
+    spawnEnemy();
+    enemies[i].type = "flipper";
+    enemies[i].depth = 0.5 + i * 0.05;
+  }
+  score = 0;
+  enemiesKilledThisLevel = 0;
+
+  // First charge: the whole web.
+  Arcade.Input._press("ShiftLeft");
+  update(16);
+  check("first zap clears every enemy", enemies.length === 0, "left " + enemies.length);
+  check("all five were scored", score === 5 * 50, "score " + score);
+  check("all five counted toward the level", enemiesKilledThisLevel === 5);
+  check("one charge left", superzapper === 1, "got " + superzapper);
+  Arcade.Input._release("ShiftLeft");
+
+  // Second charge: exactly one enemy, and it should be the nearest.
+  enemies.length = 0;
+  for (let i = 0; i < 3; i++) {
+    spawnEnemy();
+    enemies[i].type = "flipper";
+  }
+  enemies[0].depth = 0.9;
+  enemies[1].depth = 0.2; // closest to the rim
+  enemies[2].depth = 0.6;
+  const nearest = enemies[1];
+
+  Arcade.Input._press("ShiftLeft");
+  update(16);
+  check("second zap takes exactly one", enemies.length === 2, "left " + enemies.length);
+  check("and it takes the nearest one", enemies.indexOf(nearest) === -1);
+  check("no charges left", superzapper === 0, "got " + superzapper);
+  Arcade.Input._release("ShiftLeft");
+
+  // Third press: nothing.
+  const before = enemies.length;
+  Arcade.Input._press("ShiftLeft");
+  update(16);
+  check("a third press does nothing", enemies.length === before, "left " + enemies.length);
+  Arcade.Input._release("ShiftLeft");
+});
+
+suite("tempest: the superzapper recharges each level", function () {
+  startGame();
+  Arcade.Input.reset();
+  Arcade.Shell._reset();
+
+  superzapper = 0;
+  zapDisplay.textContent = 0;
+
+  // Push the level over its kill quota.
+  enemiesKilledThisLevel = enemiesPerLevel;
+  enemies.length = 0;
+  update(16);
+
+  check("level advanced", level === 2, "level " + level);
+  check("charges are back", superzapper === 2, "got " + superzapper);
+  check("HUD agrees", zapDisplay.textContent === "2", "shows " + zapDisplay.textContent);
+});
+
+suite("tempest: zapping an empty web wastes no charge", function () {
+  startGame();
+  Arcade.Input.reset();
+  Arcade.Shell._reset();
+
+  enemies.length = 0;
+  Arcade.Input._press("ShiftLeft");
+  update(16);
+  check("charge is untouched with nothing to hit", superzapper === 2, "got " + superzapper);
+  Arcade.Input._release("ShiftLeft");
+});

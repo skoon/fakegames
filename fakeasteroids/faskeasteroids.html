@@ -42,6 +42,9 @@
       <p id="message" style="display: none; color: #f00; font-weight: bold">
         GAME OVER - PRESS SPACE TO RESTART
       </p>
+      <p style="color: #888; font-size: 12px; margin-top: 4px">
+        ARROWS move &middot; SPACE fire &middot; SHIFT hyperspace &middot; P pause &middot; M mute
+      </p>
       <pre id="scores" style="color: #ff0; font-size: 14px; margin-top: 8px"></pre>
     </div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
@@ -74,10 +77,32 @@
       const SHIP_LW = SHIP_SIZE / 15; // Ship line width
       const THRUST_LW = SHIP_SIZE / 10; // Thrust line width
       const ROID_LW = SHIP_SIZE / 20; // Asteroid line width
-      // UFO Constants
+      // UFO Constants. The big saucer is slow, sprays wildly and is cheap; the
+      // small one is fast, aims properly and is worth five times as much.
       const UFO_SIZE = 20;
       const UFO_SPEED = 3; // pixels per frame
-      const UFO_POINTS = 250;
+      const UFO_LARGE = {
+        size: UFO_SIZE,
+        speed: UFO_SPEED,
+        points: 200,
+        fireInterval: 90, // frames
+        spread: 0.6, // radians of aiming error
+      };
+      const UFO_SMALL = {
+        size: UFO_SIZE * 0.6,
+        speed: UFO_SPEED * 1.4,
+        points: 1000,
+        fireInterval: 70,
+        spread: 0.12,
+      };
+      const UFO_BULLET_SPD = 4;
+      const UFO_BULLET_LIFE = 90; // frames before it fizzles out
+
+      // The small saucer starts showing up once you are good enough to deserve it.
+      const UFO_SMALL_FROM_SCORE = 3000;
+
+      // Hyperspace: a way out that might kill you. A `let` so tests can pin it.
+      let hyperspaceMisfireChance = 0.15;
 
       // Particle constants
       const PARTICLE_NUM = 18;
@@ -98,7 +123,10 @@
         xv: 0,
         active: false,
         timer: 0, // Frames until next UFO
+        kind: UFO_LARGE,
+        fireTimer: 0,
       };
+      let ufoBullets = [];
 
       // --- Audio (shared module) ---
       const GAME_KEY = "asteroids";
@@ -227,6 +255,7 @@
         ship.thrusting = Arcade.Input.held("up");
 
         if (Arcade.Input.justPressed("fire")) shoot();
+        if (Arcade.Input.justPressed("fire2")) hyperspace();
       }
 
       function endGame() {
@@ -329,17 +358,102 @@
 
       function spawnUfo() {
         if (gameOver) return;
+
+        // The better you are doing, the likelier the dangerous one turns up.
+        const smallChance = Math.min(0.7, score / (UFO_SMALL_FROM_SCORE * 2));
+        ufo.kind = Math.random() < smallChance ? UFO_SMALL : UFO_LARGE;
+
         ufo.active = true;
+        ufo.fireTimer = ufo.kind.fireInterval;
         ufo.y = Math.random() * (canvas.height * 0.8) + canvas.height * 0.1; // Random Y (within margins)
         startUfoSound();
         // Random side (Left or Right)
         if (Math.random() < 0.5) {
-          ufo.x = -UFO_SIZE;
-          ufo.xv = UFO_SPEED;
+          ufo.x = -ufo.kind.size;
+          ufo.xv = ufo.kind.speed;
         } else {
-          ufo.x = canvas.width + UFO_SIZE;
-          ufo.xv = -UFO_SPEED;
+          ufo.x = canvas.width + ufo.kind.size;
+          ufo.xv = -ufo.kind.speed;
         }
+      }
+
+      /** The saucer shoots at the ship, badly or well depending on its size. */
+      function ufoShoot() {
+        const aim =
+          Math.atan2(ship.y - ufo.y, ship.x - ufo.x) +
+          (Math.random() - 0.5) * 2 * ufo.kind.spread;
+
+        ufoBullets.push({
+          x: ufo.x,
+          y: ufo.y,
+          xv: UFO_BULLET_SPD * Math.cos(aim),
+          yv: UFO_BULLET_SPD * Math.sin(aim),
+          life: UFO_BULLET_LIFE,
+        });
+        Arcade.Audio.tone(320, {
+          slideTo: 90,
+          duration: 0.12,
+          type: "square",
+          volume: 0.12,
+        });
+      }
+
+      function killUfo(awardPoints) {
+        if (awardPoints) {
+          score += ufo.kind.points;
+          scoreEl.textContent = "SCORE: " + score;
+        }
+        explode(ufo.x, ufo.y);
+        ufo.active = false;
+        stopUfoSound();
+        ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
+      }
+
+      /**
+       * Hyperspace. Teleports the ship anywhere on the field, which is often the
+       * only escape from a crowded screen - at the cost of sometimes arriving
+       * inside a rock.
+       */
+      function hyperspace() {
+        if (gameOver) return;
+
+        ship.x = Math.random() * canvas.width;
+        ship.y = Math.random() * canvas.height;
+        ship.thrust.x = 0;
+        ship.thrust.y = 0;
+
+        Arcade.Audio.tone(1200, {
+          slideTo: 200,
+          duration: 0.25,
+          type: "sine",
+          volume: 0.18,
+        });
+
+        if (Math.random() < hyperspaceMisfireChance) {
+          // Rematerialised badly.
+          explode(ship.x, ship.y);
+          playExplosionSound();
+          loseLife();
+        } else {
+          ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
+        }
+      }
+
+      /** One place that takes a life and decides whether the run is over. */
+      function loseLife() {
+        lives--;
+        livesEl.innerText = "LIVES: " + lives;
+
+        if (lives <= 0) {
+          endGame();
+          return;
+        }
+
+        ship.x = canvas.width / 2;
+        ship.y = canvas.height / 2;
+        ship.thrust = { x: 0, y: 0 };
+        ship.a = (90 / 180) * Math.PI;
+        ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
       }
 
       function distSquared(x1, y1, x2, y2) {
@@ -386,6 +500,7 @@
         msgEl.style.display = "none";
         asteroids = [];
         bullets = [];
+        ufoBullets = [];
         particles = [];
         ship.x = canvas.width / 2;
         ship.y = canvas.height / 2;
@@ -544,21 +659,8 @@
             distSquared(ship.x, ship.y, a.x, a.y) < Math.pow(ship.r + a.r, 2)
           ) {
             explode(ship.x, ship.y);
-            lives--;
-            livesEl.innerText = "LIVES: " + lives;
-
-            if (lives <= 0) {
-              playExplosionSound();
-              endGame();
-            } else {
-              playExplosionSound();
-              // Respawn
-              ship.x = canvas.width / 2;
-              ship.y = canvas.height / 2;
-              ship.thrust = { x: 0, y: 0 };
-              ship.a = (90 / 180) * Math.PI;
-              ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
-            }
+            playExplosionSound();
+            loseLife();
           }
         }
 
@@ -609,72 +711,58 @@
         // 6. Handle UFO
         if (!gameOver) {
           if (ufo.active) {
+            const uSize = ufo.kind.size;
+
             // Move UFO
             ufo.x += ufo.xv;
 
+            // Shoot at the ship
+            ufo.fireTimer--;
+            if (ufo.fireTimer <= 0) {
+              ufoShoot();
+              ufo.fireTimer = ufo.kind.fireInterval;
+            }
+
             // Draw UFO (Saucer Shape)
-            ctx.strokeStyle = "white";
+            ctx.strokeStyle = ufo.kind === UFO_SMALL ? "#ff5555" : "white";
             ctx.lineWidth = SHIP_LW;
             ctx.beginPath();
             // Bottom arc (Main body)
-            ctx.ellipse(
-              ufo.x,
-              ufo.y,
-              UFO_SIZE,
-              UFO_SIZE / 2.5,
-              0,
-              0,
-              Math.PI * 2
-            );
+            ctx.ellipse(ufo.x, ufo.y, uSize, uSize / 2.5, 0, 0, Math.PI * 2);
             // Top arc (Dome)
-            ctx.moveTo(ufo.x - UFO_SIZE / 2, ufo.y - UFO_SIZE / 6);
-            ctx.arc(ufo.x, ufo.y - UFO_SIZE / 6, UFO_SIZE / 2, Math.PI, 0);
+            ctx.moveTo(ufo.x - uSize / 2, ufo.y - uSize / 6);
+            ctx.arc(ufo.x, ufo.y - uSize / 6, uSize / 2, Math.PI, 0);
             ctx.stroke();
 
             // Collision: Ship vs UFO
             if (
               ship.blinkNum == 0 &&
               distSquared(ship.x, ship.y, ufo.x, ufo.y) <
-                Math.pow(ship.r + UFO_SIZE, 2)
+                Math.pow(ship.r + uSize, 2)
             ) {
               explode(ship.x, ship.y);
-              explode(ufo.x, ufo.y);
-              ufo.active = false;
-              stopUfoSound();
-              ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
-              lives--;
-              livesEl.innerText = "LIVES: " + lives;
+              killUfo(false); // ramming it earns you nothing
               playExplosionSound();
-
-              if (lives <= 0) endGame(); else {
-                ship.x = canvas.width / 2;
-                ship.y = canvas.height / 2;
-                ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
-              }
+              loseLife();
             }
 
             // Collision: Bullets vs UFO
             for (let i = bullets.length - 1; i >= 0; i--) {
               if (
                 distSquared(bullets[i].x, bullets[i].y, ufo.x, ufo.y) <
-                Math.pow(UFO_SIZE, 2)
+                Math.pow(uSize, 2)
               ) {
                 bullets.splice(i, 1);
-                ufo.active = false;
-                stopUfoSound();
-                ufo.timer = Math.floor(Math.random() * (30 * FPS)) + 30 * FPS;
-                score += UFO_POINTS;
-                scoreEl.textContent = "SCORE: " + score;
                 playExplosionSound();
-                explode(ufo.x, ufo.y);
+                killUfo(true);
                 break;
               }
             }
 
             // Despawn checks
             if (
-              (ufo.xv > 0 && ufo.x > canvas.width + UFO_SIZE) ||
-              (ufo.xv < 0 && ufo.x < -UFO_SIZE)
+              (ufo.xv > 0 && ufo.x > canvas.width + uSize) ||
+              (ufo.xv < 0 && ufo.x < -uSize)
             ) {
               ufo.active = false;
               stopUfoSound();
@@ -686,6 +774,63 @@
             if (ufo.timer <= 0) {
               spawnUfo();
             }
+          }
+        }
+
+        // 6b. Saucer fire
+        for (let i = ufoBullets.length - 1; i >= 0; i--) {
+          const b = ufoBullets[i];
+          b.x += b.xv;
+          b.y += b.yv;
+          b.life--;
+
+          // Wrap like everything else on this screen.
+          if (b.x < 0) b.x = canvas.width;
+          else if (b.x > canvas.width) b.x = 0;
+          if (b.y < 0) b.y = canvas.height;
+          else if (b.y > canvas.height) b.y = 0;
+
+          ctx.fillStyle = "#ff5555";
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, 2.5, 0, Math.PI * 2, false);
+          ctx.fill();
+
+          if (b.life <= 0) {
+            ufoBullets.splice(i, 1);
+            continue;
+          }
+
+          // Saucer fire breaks rocks too, which is how you get free splits.
+          let hitRock = false;
+          for (let j = asteroids.length - 1; j >= 0; j--) {
+            const a = asteroids[j];
+            if (distSquared(b.x, b.y, a.x, a.y) < Math.pow(a.r, 2)) {
+              explode(a.x, a.y);
+              if (a.r > MIN_ROID_SIZE) {
+                createAsteroid(a.x, a.y, a.r / 2);
+                createAsteroid(a.x, a.y, a.r / 2);
+              }
+              asteroids.splice(j, 1);
+              playAsteroidBreakSound();
+              updateMusicTempo();
+              hitRock = true;
+              break;
+            }
+          }
+          if (hitRock) {
+            ufoBullets.splice(i, 1);
+            continue;
+          }
+
+          if (
+            !gameOver &&
+            ship.blinkNum === 0 &&
+            distSquared(b.x, b.y, ship.x, ship.y) < Math.pow(ship.r, 2)
+          ) {
+            ufoBullets.splice(i, 1);
+            explode(ship.x, ship.y);
+            playExplosionSound();
+            loseLife();
           }
         }
 

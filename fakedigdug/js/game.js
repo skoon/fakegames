@@ -16,11 +16,24 @@ const PUMP_DURATION = 300;
 const STUN_DURATION = 1000;
 const PUMPS_TO_KILL = 4;
 
-// Points per kill, keyed by what did the killing. Crushing is worth more.
+// Points per kill, keyed by what did the killing.
+//
+// A crushed enemy scores nothing on its own: a rock pays by how many it caught
+// at once, which crushEnemies() awards. That is the whole risk/reward of Dig
+// Dug - luring a second monster under the same rock is worth more than two
+// separate drops.
 const ENEMY_SCORE = {
     pump: { pooka: 500, fygar: 1000 },
-    rock: { pooka: 1000, fygar: 2000 },
+    rock: { pooka: 0, fygar: 0 },
 };
+
+// Index is how many went under one rock. Four is the practical maximum.
+const ROCK_CHAIN_SCORE = [0, 1000, 2500, 4000, 6000];
+
+// The prize that appears mid-tunnel once you have dropped two rocks.
+const VEGETABLE_POINTS = [400, 600, 800, 1000, 2000, 3000];
+const VEGETABLE_LIFETIME = 10000; // ms on screen
+const VEGETABLE_ROCKS_REQUIRED = 2;
 
 const DIRT_COLOR = 0x8B6914;
 const DIRT_SPECK = 0x7A5E12;
@@ -49,6 +62,11 @@ const Sound = {
     },
     die() {
         Arcade.Audio.tone(300, { slideTo: 60, duration: 0.7, type: 'sawtooth', volume: 0.3 });
+    },
+    bonus() {
+        [660, 880, 1320].forEach((f, i) =>
+            Arcade.Audio.tone(f, { duration: 0.12, delay: i * 0.09, type: 'square', volume: 0.22 })
+        );
     },
     clear() {
         [523, 659, 784, 1046].forEach((f, i) =>
@@ -101,6 +119,8 @@ class DigDugScene extends Phaser.Scene {
         this.respawnTimer = 0;
         this.levelOver = false;
         this.paused = false;
+        this.rocksLanded = 0;
+        this.vegetable = null;
 
         this.updateUI();
 
@@ -127,6 +147,7 @@ class DigDugScene extends Phaser.Scene {
         this.updateEnemies(delta);
         this.updateFires(delta);
         this.updateRocks(delta);
+        this.updateVegetable(delta);
         this.checkCollisions();
         this.updateUI();
         this.checkLevelComplete();
@@ -360,6 +381,17 @@ class DigDugScene extends Phaser.Scene {
         g.fillRect(2, 2, 5, 5);
         g.fillRect(10, 9, 4, 4);
         g.generateTexture('rock', TILE, TILE);
+        g.destroy();
+
+        g = this.make.graphics({ add: false });
+        g.fillStyle(0xFF6600);
+        g.fillTriangle(4, 5, 12, 5, 8, 15);
+        g.fillStyle(0xFF8833);
+        g.fillTriangle(6, 6, 10, 6, 8, 12);
+        g.fillStyle(0x22AA22);
+        g.fillRect(6, 1, 2, 4);
+        g.fillRect(9, 2, 2, 3);
+        g.generateTexture('vegetable', TILE, TILE);
         g.destroy();
 
         g = this.make.graphics({ add: false });
@@ -718,7 +750,7 @@ class DigDugScene extends Phaser.Scene {
                 const bottomR = Math.max(...rock.tiles.map(t => t[0]));
                 const checkR = bottomR + 1;
 
-                if (checkR >= ROWS - 1) { rock.falling = false; continue; }
+                if (checkR >= ROWS - 1) { this.landRock(rock); continue; }
 
                 const cols = rock.tiles.filter(t => t[0] === bottomR).map(t => t[1]);
                 const blocked = cols.some(c => {
@@ -737,9 +769,8 @@ class DigDugScene extends Phaser.Scene {
                         this.drawTile(t[0], t[1]);
                     }
                     rock.y += TILE;
-                    Sound.rock();
                 } else {
-                    rock.falling = false;
+                    this.landRock(rock);
                 }
             } else {
                 const bottomR = Math.max(...rock.tiles.map(t => t[0]));
@@ -775,16 +806,83 @@ class DigDugScene extends Phaser.Scene {
                     return;
                 }
             }
+            // Collect everyone this rock caught before scoring, so a chain pays
+            // as a chain rather than as N separate crushes.
+            const victims = [];
             for (let i = this.enemies.length - 1; i >= 0; i--) {
                 const e = this.enemies[i];
                 for (const [rr, rc] of rock.tiles) {
                     if (rr === e.gridY && rc === e.gridX) {
-                        this.killEnemy(e, 'rock');
+                        victims.push(e);
                         break;
                     }
                 }
             }
+            this.crushEnemies(victims);
         }
+
+        this.checkVegetable(pc, pr);
+    }
+
+    /** A rock has come to rest. Each rock only counts toward the bonus once. */
+    landRock(rock) {
+        rock.falling = false;
+        if (rock.landed) return;
+
+        rock.landed = true;
+        this.rocksLanded++;
+        Sound.rock();
+
+        if (this.rocksLanded >= VEGETABLE_ROCKS_REQUIRED) this.spawnVegetable();
+    }
+
+    crushEnemies(victims) {
+        if (!victims.length) return;
+
+        const chain = Math.min(victims.length, ROCK_CHAIN_SCORE.length - 1);
+        this.score += ROCK_CHAIN_SCORE[chain];
+
+        for (const e of victims) this.killEnemy(e, 'rock');
+    }
+
+    /* ---------- vegetable bonus ---------- */
+
+    spawnVegetable() {
+        if (this.vegetable) return;
+
+        const col = Math.floor(COLS / 2);
+        const row = Math.floor(ROWS / 2);
+        this.vegetable = {
+            gridX: col,
+            gridY: row,
+            points: VEGETABLE_POINTS[Math.min(this.level - 1, VEGETABLE_POINTS.length - 1)],
+            timer: VEGETABLE_LIFETIME,
+            sprite: this.add
+                .sprite(col * TILE + TILE / 2, row * TILE + TILE / 2, 'vegetable')
+                .setOrigin(0.5, 0.5)
+                .setDepth(4),
+        };
+    }
+
+    updateVegetable(delta) {
+        if (!this.vegetable) return;
+        this.vegetable.timer -= delta;
+        if (this.vegetable.timer <= 0) this.clearVegetable();
+    }
+
+    clearVegetable() {
+        if (!this.vegetable) return;
+        this.vegetable.sprite.destroy();
+        this.vegetable = null;
+    }
+
+    checkVegetable(pc, pr) {
+        if (!this.vegetable) return;
+        if (this.vegetable.gridX !== pc || this.vegetable.gridY !== pr) return;
+
+        this.score += this.vegetable.points;
+        Sound.bonus();
+        this.clearVegetable();
     }
 
     playerDie() {
@@ -855,6 +953,7 @@ class DigDugScene extends Phaser.Scene {
         if (this.enemies.length === 0 && !this.isDead && !this.levelOver) {
             this.levelOver = true;
             this.paused = true;
+            this.clearVegetable();
 
             Sound.clear();
 

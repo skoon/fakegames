@@ -1,159 +1,122 @@
-# Implementation plan — shared `arcade/` module
+# Implementation plan — signature mechanics
 
-Service manual step 3. Extract the code all seven games currently reimplement:
-audio, input, high scores, pause/mute, and the back-to-arcade shell.
+Service manual step 4: give each cabinet the one mechanic its original is
+remembered for. Supersedes the step-3 plan (shared `arcade/` module), which is
+complete — see [task.md](task.md).
 
-## Why
+## The seven
 
-| Concern | Today |
-| --- | --- |
-| Web Audio | 6 separate implementations; 2 games silent |
-| High scores | 3 formats: top-5 with initials (Spy Hunter), one number (Invaders), nothing (5 games) |
-| Mute | Spy Hunter only |
-| Pause | No game has one |
-| Gamepad | No game has one |
-| Back to arcade | Pole Position only; the other six are dead ends |
+| Game | Mechanic | Size | Changes the game model? |
+| --- | --- | --- | --- |
+| Space Invaders | Mystery saucer | M | No — additive |
+| Asteroids | Firing UFO + hyperspace | M | No — additive |
+| Tempest | Superzapper | S | No — additive |
+| Dig Dug | Rock chains + vegetable bonus | M | No — additive |
+| Tempest | Web shapes | M | Yes — lane geometry stops being a circle |
+| Breakout | Power-ups | M | Yes — one ball becomes many |
+| Pole Position | Countdown timer | M | Yes — laps stop being the win condition |
+| Spy Hunter | Weapons van | L | Yes — a whole weapon subsystem |
 
-Two of the three bugs fixed in steps 1–2 were audio-lifecycle bugs written
-independently in two different games. One implementation makes that class of
-bug unwritable twice.
+## Ordering: by risk, not by impact
 
-## Constraints that shape the design
+The service manual ordered these by what each adds to its game. I want to invert
+that and go by risk instead, because four of the eight are purely additive and
+four rewrite something load-bearing. Landing the additive four first means the
+shared module and the test rig get exercised across four games before anything
+structural moves.
 
-1. **No build step, and it must keep working from `file://`.** ES modules are
-   blocked by CORS on `file://`, so the module ships as plain scripts attaching
-   to a single `Arcade` global. No bundler, no package.json.
-2. **The games are not alike.** Five are raw canvas with everything at module
-   scope; two are Phaser scenes. Their loops differ — RAF with internal state
-   gating, RAF that halts on game over, and Phaser's `update`. A common *engine*
-   would be a rewrite of all seven.
-3. **So this is a library, not a framework.** Independent helpers a game opts
-   into one at a time. No game is required to adopt all of it, and a
-   half-retrofitted game still runs.
-4. **The test runner extracts the first bare `<script>` block.** Shared code
-   must be included as `<script src="...">`, which extraction already skips.
+Step 3 is the argument for this: I moved fast, retrofitted Spy Hunter before
+writing its suite, and a bad edit boundary silently deleted its start overlay.
+The smoke test passed because the crash only fired on SPACE. Front-loading the
+low-risk work buys confidence cheaply.
 
-## Proposed layout
+**Phase 1 — additive.** Invaders' saucer, Asteroids' UFO fire and hyperspace,
+Tempest's superzapper, Dig Dug's chains and vegetable. Four games, no
+restructuring. Suite per feature, written alongside.
 
-```
-arcade/
-  arcade.css     shell chrome: back link, pause overlay, scaled canvas wrapper
-  audio.js       Arcade.Audio  — one context, tone/noise, music loop, master mute
-  input.js       Arcade.Input  — keyboard + gamepad, held & justPressed
-  scores.js      Arcade.Scores — per-game top-5 with initials
-  shell.js       Arcade.Shell  — back link, P/M/Esc bindings, pause overlay
-```
+**Phase 2 — Tempest web shapes.** `calculateLaneGeometry()` becomes data-driven
+over a `WEBS` table. Open webs (a V, a line, a cross) mean the player can no
+longer wrap from lane 15 to lane 0, so movement and flipper logic need a
+`closed` flag. Self-contained to one game.
 
-### `Arcade.Audio`
+**Phase 3 — Breakout power-ups.** The real work is `ball` becoming `balls[]`;
+multiball is worthless without it and bolting it on later is worse. Drops fall
+from destroyed bricks and are caught with the paddle: wide, multiball, laser,
+catch, slow.
 
-One lazily-created `AudioContext` behind a master gain, resumed on first input.
-This is the Tempest bug fixed once, centrally.
+**Phase 4 — Pole Position countdown.** Replaces the lap-count win condition.
+Brings a score with it, which finally gives this cabinet a high-score table —
+the gap I left open in step 3.
 
-```js
-Arcade.Audio.tone(freq, { duration, type, volume, slideTo });
-Arcade.Audio.noise({ duration, volume, filterFrom, filterTo });  // explosions
-Arcade.Audio.mute(true|false);   Arcade.Audio.isMuted();
-const music = Arcade.Audio.loop({ notes, tempo, type, volume });
-music.setTempo(ms);  music.start();  music.stop();
-```
+**Phase 5 — Spy Hunter weapons van.** The largest single piece. Van entity,
+ramp/entry state machine, weapon inventory, rear-fire deployment, HUD.
 
-`setTempo` exists because Invaders and Asteroids both ramp their bassline as the
-field thins — that is the one genuinely shared music behaviour.
+## Design decisions worth stating
 
-### `Arcade.Input`
+**Mystery saucer.** Spawns on a timer, crosses the top, worth 50/100/150/300.
+The arcade's values are famously a deterministic function of your shot count; I
+plan to pick randomly from that table rather than reproduce the counter, unless
+you want the authentic version.
 
-Self-polls on its own RAF so retrofitting needs no change to a game's loop.
+**Hyperspace and superzapper both want a second button.** `Arcade.Input` already
+maps `fire2` to Shift. Both go there, so the whole arcade keeps one convention.
 
-```js
-Arcade.Input.held("left")           // keyboard or gamepad d-pad/stick
-Arcade.Input.justPressed("fire")    // replaces the hand-rolled spacePressed flags
-Arcade.Input.bind({ fire: ["Space", "KeyZ"], ... })   // optional override
-```
+**UFO sizes.** Large saucer fires roughly toward the player (200 pts), small
+saucer fires accurately and gets more accurate as your score climbs (1000 pts).
 
-Default map: arrows + WASD → directions; Space → `fire`; Shift → `fire2`;
-Enter → `start`. Gamepad: left stick + d-pad → directions, A → `fire`,
-B → `fire2`, Start → `start`.
+**Rock chains.** 1 enemy 1000, 2 → 2500, 3 → 4000, 4 → 6000. The vegetable
+appears at the centre tunnel after the second rock is dropped and times out.
+Both fold into the `ENEMY_SCORE`/`killEnemy` path that step 2 established, so
+scoring stays owned by one function.
 
-### `Arcade.Scores`
+**Power-up drops** are a new entity type with their own collision pass. Effects
+are timed except multiball. Laser paddle adds a second projectile array.
 
-Spy Hunter's implementation promoted, generalised over a game key.
+**Pole Position's countdown** starts at 90 seconds, and crossing the line adds
+time rather than simply counting laps. Running out is a distinct end state from
+finishing — GAME OVER versus FINISH, with different results panels.
 
-```js
-Arcade.Scores.top("tempest")            // [{name, score}, ...]
-Arcade.Scores.qualifies("tempest", n)   // bool
-Arcade.Scores.submit("tempest", "SCK", n)
-Arcade.Scores.promptInitials(n, cb)     // shared DOM overlay, optional
-```
+**Weapons van.** Our road is a straight scrolling tile, with no side roads to
+pull out of. So the van enters ahead of the player, matches speed, and opens its
+rear ramp; you drive into the rear to collect. That is a deliberate deviation
+from the arcade's side-road entry, forced by the road we have.
 
-Data-only by default, because Phaser, canvas and DOM games render differently.
-`promptInitials` is an optional shared HTML overlay for the five DOM/canvas
-games; the Phaser games can keep drawing their own and just call `submit`.
+## Testing
 
-**Migration:** Invaders' `spaceInvadersHighScore` (a bare number) and Spy
-Hunter's `fakespyhunter_highscores` (an array) are read once on first load and
-folded into the new per-game format, so nobody loses a score. Old keys are left
-in place rather than deleted.
+Every feature gets assertions written *with* it, not after. Step 3 proved that
+smoke tests catch load failures and nothing else — a screenshot found the bug
+they missed. So each phase ends with: suites green, all pages boot clean, and a
+screenshot of anything with a visual component.
 
-### `Arcade.Shell`
-
-Injects the back link, owns P / M / Esc, and renders the pause overlay.
-
-Pause needs a contract because the loops differ:
-
-- Canvas games: `Arcade.Shell.paused` is checked in the existing state gate —
-  a one-line change per game (`if (gameState === "playing" && !Arcade.Shell.paused)`).
-- Phaser games: `Arcade.Shell.onPause(cb)` fires, and the game calls
-  `scene.scene.pause()` / `resume()`.
-
-## Phasing
-
-**Phase 1 — build the module.** `arcade/` plus a test page and suite covering
-score storage and migration, input edge detection, mute gating, and single-context
-audio. No game touched.
-
-**Phase 2 — pilot on Tempest.** Chosen because it currently has *no* scores, no
-mute, no pause and no back link, so it exercises every part of the module, and
-its audio is small enough that a regression is obvious. **Stop here for review**
-— if the shape is wrong, one game is cheap to unwind.
-
-**Phase 3 — the four remaining canvas games.** Asteroids, Space Invaders,
-Breakout, Pole Position. Breakout gains audio it has never had; Invaders gets
-its single-number high score migrated.
-
-**Phase 4 — the two Phaser games.** Dig Dug and Spy Hunter take Audio, Scores
-and the back link only. They keep Phaser's scale manager, so they skip
-`arcade.css`'s canvas wrapper. Spy Hunter's existing mute button is rewired to
-`Arcade.Audio.mute` rather than being removed. Dig Dug gains audio it has never
-had.
-
-**Phase 5 — tests and cleanup.** Extend `tests/` to cover each retrofitted game;
-update `run.ps1` and the test pages to load `arcade/` alongside game source.
+The counterfactual discipline stays: for each new mechanic, confirm the suite
+fails when the mechanic is disabled.
 
 ## Risks
 
-- **Spy Hunter regression.** It is the only game with working scores and mute;
-  retrofitting means changing code that works today. Mitigation: it goes last,
-  and its suite is written before the change.
-- **Phaser scale conflict.** `arcade.css` positions a scaled canvas wrapper;
-  Phaser manages its own canvas. Mitigation: Phaser games take the CSS for the
-  back link only, not the wrapper.
-- **Pause is not free.** Games using wall-clock time (Tempest's `Date.now()`
-  fire rate, Pole Position's lap timer) will jump on resume unless paused time
-  is subtracted. `Arcade.Shell` will expose `pausedMs` and the affected games
-  will offset by it.
-- **Audio autoplay policy.** The context can only resume after a real gesture.
-  `Arcade.Input` already sees the first keypress, so it will resume the context
-  centrally — removing another thing each game currently gets slightly wrong.
+- **Breakout's multiball touches every collision branch.** Lives, level
+  completion and the launch flow all assume exactly one ball.
+- **Open webs break wraparound arithmetic** in three places: player movement,
+  flipper lane changes, and tanker splitting.
+- **Pole Position's timer interacts with pause.** The shell's `now()` already
+  handles this; the lap timer must use it rather than raw `dt` accumulation.
+- **Spy Hunter's van is a state machine inside a game that has none.** It needs
+  an explicit player state (driving / entering / inside / exiting) that nothing
+  else in that file currently has.
+- **Scope.** This is eight mechanics across seven games. It is the largest step
+  in the manual by some distance.
 
 ## Out of scope
 
-Combined leaderboard on the index page, consistent canvas scaling for small
-screens, vendored Phaser, and touch controls. Those are service manual step 5.
+Everything in the manual's step 5: combined leaderboard, consistent scaling,
+vendored Phaser, touch controls, marquee copy.
 
 ## Open questions
 
-1. **How far this session?** Phases 1–2 (module + pilot, stop for review), or
-   push straight through all five phases?
-2. **Gamepad now or later?** It is the one item with no existing behaviour to
-   preserve, so it could be deferred without blocking anything else.
-3. **Old high scores.** Migrate as described, or start the new tables clean?
+1. **How far this session?** All five phases, or land Phase 1 (the four additive
+   mechanics) and review before anything structural moves? I recommend the
+   latter.
+2. **Pole Position:** does the countdown *replace* the 3-lap win condition, or
+   sit alongside it (finish 3 laps before the clock runs out)? Alongside is less
+   authentic but keeps the results panel from step 2 meaningful.
+3. **Mystery saucer scoring:** random from {50,100,150,300}, or the authentic
+   shot-count formula where the 23rd shot and every 15th after is worth 300?

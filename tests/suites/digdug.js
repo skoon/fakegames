@@ -114,3 +114,158 @@ suite("digdug: a rock kill is not scored twice", function () {
   );
   check("crushed enemy was removed", scene.enemies.indexOf(victim) === -1);
 });
+
+/* --------------------------------------- rock chains and the vegetable bonus */
+
+/** Puts `count` enemies on the tiles a falling rock is about to occupy. */
+function stageCrush(scene, count) {
+  const rock = scene.rocks[0];
+  rock.falling = true;
+  rock.landed = false;
+  rock.tiles = [];
+
+  for (let i = 0; i < count; i++) {
+    const e = scene.enemies[i];
+    e.gridY = 10;
+    e.gridX = 5 + i;
+    rock.tiles.push([e.gridY, e.gridX]);
+  }
+
+  // Keep the player well away so playerDie does not fire first.
+  scene.player.x = 1.5 * 16;
+  scene.player.y = 1.5 * 16;
+  scene.player.gridX = 1;
+  scene.player.gridY = 1;
+
+  scene.score = 0;
+  return rock;
+}
+
+suite("digdug: a rock pays by how many it catches at once", function () {
+  const scene = freshScene();
+
+  stageCrush(scene, 1);
+  scene.checkCollisions();
+  check("one enemy is worth 1000", scene.score === 1000, "got " + scene.score);
+
+  const two = freshScene();
+  stageCrush(two, 2);
+  two.checkCollisions();
+  check("two at once is worth 2500, not 2000", two.score === 2500, "got " + two.score);
+
+  const three = freshScene();
+  stageCrush(three, 3);
+  three.checkCollisions();
+  check("three at once is worth 4000", three.score === 4000, "got " + three.score);
+});
+
+suite("digdug: crushed enemies are removed, and only counted once", function () {
+  const scene = freshScene();
+  const before = scene.enemies.length;
+  stageCrush(scene, 2);
+  scene.checkCollisions();
+
+  check("both were removed", scene.enemies.length === before - 2, "left " + scene.enemies.length);
+  check("sprite array kept in step", scene.enemySprs.length === scene.enemies.length);
+
+  // Running the same frame again must not pay twice.
+  const after = scene.score;
+  scene.checkCollisions();
+  check("no double payment", scene.score === after, "got " + scene.score);
+});
+
+suite("digdug: chained crushes beat separate ones", function () {
+  const chained = freshScene();
+  stageCrush(chained, 2);
+  chained.checkCollisions();
+
+  const separate = freshScene();
+  separate.score = 0;
+  for (let i = 0; i < 2; i++) {
+    const rock = separate.rocks[i];
+    rock.falling = true;
+    rock.landed = false;
+    const e = separate.enemies[0];
+    e.gridY = 10;
+    e.gridX = 5;
+    rock.tiles = [[10, 5]];
+    separate.player.gridX = 1;
+    separate.player.gridY = 1;
+    separate.player.x = 24;
+    separate.player.y = 24;
+    separate.checkCollisions();
+  }
+
+  check(
+    "luring two under one rock pays better",
+    chained.score > separate.score,
+    chained.score + " vs " + separate.score
+  );
+});
+
+suite("digdug: the vegetable appears after two rocks land", function () {
+  const scene = freshScene();
+  check("nothing there to start", scene.vegetable === null);
+  check("no rocks landed yet", scene.rocksLanded === 0);
+
+  scene.landRock(scene.rocks[0]);
+  check("one rock is not enough", scene.vegetable === null);
+  check("but it was counted", scene.rocksLanded === 1);
+
+  scene.landRock(scene.rocks[1]);
+  check("two rocks brings the prize", scene.vegetable !== null);
+  check("it sits mid-map", scene.vegetable.gridX === Math.floor(COLS / 2));
+  check("it is worth something", scene.vegetable.points > 0);
+
+  // A rock that lands twice must not double-count.
+  const count = scene.rocksLanded;
+  scene.landRock(scene.rocks[1]);
+  check("landing the same rock again is ignored", scene.rocksLanded === count);
+});
+
+suite("digdug: walking onto the vegetable collects it", function () {
+  const scene = freshScene();
+  scene.landRock(scene.rocks[0]);
+  scene.landRock(scene.rocks[1]);
+  check("prize is on the board", scene.vegetable !== null);
+
+  const worth = scene.vegetable.points;
+  const sprite = scene.vegetable.sprite;
+  scene.score = 0;
+
+  scene.player.gridX = scene.vegetable.gridX;
+  scene.player.gridY = scene.vegetable.gridY;
+  scene.player.x = scene.vegetable.gridX * 16 + 8;
+  scene.player.y = scene.vegetable.gridY * 16 + 8;
+  scene.checkCollisions();
+
+  check("points were awarded", scene.score === worth, "got " + scene.score);
+  check("it is gone from the board", scene.vegetable === null);
+  check("its sprite was destroyed", sprite.destroyed === true);
+});
+
+suite("digdug: the vegetable times out if you ignore it", function () {
+  const scene = freshScene();
+  scene.landRock(scene.rocks[0]);
+  scene.landRock(scene.rocks[1]);
+
+  scene.updateVegetable(VEGETABLE_LIFETIME - 1);
+  check("still there just before the deadline", scene.vegetable !== null);
+
+  scene.updateVegetable(2);
+  check("gone after it", scene.vegetable === null);
+});
+
+suite("digdug: the vegetable is worth more on later levels", function () {
+  const early = freshScene();
+  early.level = 1;
+  early.spawnVegetable();
+  const earlyWorth = early.vegetable.points;
+
+  const later = freshScene();
+  later.level = 5;
+  later.spawnVegetable();
+
+  check("later levels pay more", later.vegetable.points > earlyWorth,
+        later.vegetable.points + " vs " + earlyWorth);
+});

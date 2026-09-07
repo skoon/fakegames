@@ -102,6 +102,7 @@
         <div>SCORE: <span id="score">0</span></div>
         <div>LEVEL: <span id="level">1</span></div>
         <div>LIVES: <span id="lives">3</span></div>
+        <div>ZAP: <span id="zap">2</span></div>
       </div>
       <div id="startScreen">
         <h1>FAKE TEMPEST</h1>
@@ -110,6 +111,7 @@
         <div class="controls">
           ← → Arrow Keys to Move<br />
           SPACE to Fire<br />
+          SHIFT for Superzapper<br />
           P Pause &middot; M Mute &middot; ESC Arcade
         </div>
       </div>
@@ -130,6 +132,7 @@
       const scoreDisplay = document.getElementById("score");
       const levelDisplay = document.getElementById("level");
       const livesDisplay = document.getElementById("lives");
+      const zapDisplay = document.getElementById("zap");
       const gameOverScreen = document.getElementById("gameOver");
       const startScreen = document.getElementById("startScreen");
 
@@ -158,6 +161,11 @@
       let levelStartTime = 0;
       let enemiesKilledThisLevel = 0;
       let enemiesPerLevel = 10;
+
+      // Superzapper: two charges a level. The first clears the web, the second
+      // takes a single enemy - exactly as stingy as the original.
+      const SUPERZAPPER_CHARGES = 2;
+      let superzapper = SUPERZAPPER_CHARGES;
 
       const GAME_KEY = "tempest";
       const startScores = document.getElementById("startScores");
@@ -461,6 +469,46 @@
         });
       }
 
+      // Awards the kill, spits particles, counts it toward the level. Shared by
+      // bullets and the superzapper so scoring lives in one place.
+      function destroyEnemy(index) {
+        const enemy = enemies[index];
+        const pos = getPositionInLane(enemy.lane, enemy.depth);
+
+        if (enemy.type === "tanker") {
+          createExplosion(pos.x, pos.y, "#f0f", 20);
+          score += 100;
+        } else {
+          createExplosion(pos.x, pos.y, enemy.type === "spiker" ? "#0f0" : "#f00");
+          score += enemy.type === "spiker" ? 75 : 50;
+        }
+
+        enemies.splice(index, 1);
+        enemiesKilledThisLevel++;
+        scoreDisplay.textContent = score;
+      }
+
+      function useSuperzapper() {
+        if (superzapper <= 0 || !enemies.length) return;
+
+        if (superzapper === SUPERZAPPER_CHARGES) {
+          // First charge takes the whole web.
+          for (let i = enemies.length - 1; i >= 0; i--) destroyEnemy(i);
+          playSound(90, 0.6, "sawtooth");
+        } else {
+          // Second charge is worth exactly one enemy - the closest one.
+          let nearest = 0;
+          for (let i = 1; i < enemies.length; i++) {
+            if (enemies[i].depth < enemies[nearest].depth) nearest = i;
+          }
+          destroyEnemy(nearest);
+          playSound(160, 0.3, "sawtooth");
+        }
+
+        superzapper--;
+        zapDisplay.textContent = superzapper;
+      }
+
       function fireBullet() {
         bullets.push({
           lane: player.lane,
@@ -521,6 +569,9 @@
           player.lane = (player.lane + 1) % NUM_LANES;
           lastMoveTime = now;
         }
+
+        // Superzapper
+        if (Arcade.Input.justPressed("fire2")) useSuperzapper();
 
         // Firing
         if (Arcade.Input.held("fire") && now - lastFireTime > fireRate) {
@@ -609,11 +660,10 @@
               bullet.lane === enemy.lane &&
               Math.abs(bullet.depth - enemy.depth) < 0.05
             ) {
-              const pos = getPositionInLane(enemy.lane, enemy.depth);
-
+              // A shot tanker splits before it dies; the superzapper is not so
+              // generous, which is why the split lives here and not in
+              // destroyEnemy.
               if (enemy.type === "tanker") {
-                // Tanker splits into two flippers
-                createExplosion(pos.x, pos.y, "#f0f", 20);
                 enemies.push({
                   lane: (enemy.lane - 1 + NUM_LANES) % NUM_LANES,
                   depth: enemy.depth,
@@ -630,22 +680,13 @@
                   flipTimer: 0,
                   flipDirection: 1,
                 });
-                score += 100;
                 playSound(200, 0.2, "square");
               } else {
-                createExplosion(
-                  pos.x,
-                  pos.y,
-                  enemy.type === "spiker" ? "#0f0" : "#f00"
-                );
-                score += enemy.type === "spiker" ? 75 : 50;
                 playSound(300, 0.15, "square");
               }
 
-              enemies.splice(j, 1);
+              destroyEnemy(j);
               bullets.splice(i, 1);
-              enemiesKilledThisLevel++;
-              scoreDisplay.textContent = score;
               break;
             }
           }
@@ -689,6 +730,8 @@
           enemiesKilledThisLevel = 0;
           enemiesPerLevel += 5;
           enemySpawnRate = Math.max(500, enemySpawnRate - 200);
+          superzapper = SUPERZAPPER_CHARGES;
+          zapDisplay.textContent = superzapper;
 
           // Clear spikes on level up
           spikes.length = 0;
@@ -754,6 +797,8 @@
         enemySpawnRate = 2000;
         enemiesKilledThisLevel = 0;
         enemiesPerLevel = 10;
+        superzapper = SUPERZAPPER_CHARGES;
+        zapDisplay.textContent = superzapper;
         lastFrameTime = 0;
 
         scoreDisplay.textContent = score;
