@@ -32,6 +32,13 @@ into one page they would collide, and `let`/`const` redeclaration would throw
 before a single assertion ran. So each game gets its own page and its own Chrome
 run.
 
+## The shared module
+
+Every game now loads `arcade/` (audio, input, scores, shell). Test pages must
+load those four scripts too, before the game source - see any page in `pages/`.
+`lib/stubs.js` fakes the AudioContext underneath, so `audioBook.contextsCreated`
+asserts the module really does keep exactly one.
+
 ## Adding a game
 
 1. If its JavaScript is inline, add it to the `$inline` map in `Build-Sources`

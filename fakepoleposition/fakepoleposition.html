@@ -297,26 +297,12 @@
         letter-spacing: 2px;
       }
 
-      .back-link {
-        position: absolute;
-        top: 20px;
-        left: 20px;
-        color: #555;
-        text-decoration: none;
-        font-size: 12px;
-        z-index: 30;
-        font-family: "Share Tech Mono", monospace;
-      }
-      .back-link:hover {
-        color: #fff;
-      }
     </style>
+    <link rel="stylesheet" href="../arcade/arcade.css" />
   </head>
   <body>
     <div class="crt-overlay"></div>
     <div class="crt-glow"></div>
-
-    <a href="../index.html" class="back-link">← BACK TO ARCADE</a>
 
     <div id="game-container">
       <canvas id="gameCanvas" width="1024" height="768"></canvas>
@@ -343,11 +329,18 @@
           <span class="key">↑</span> ACCELERATE &nbsp;
           <span class="key">↓</span> BRAKE <br />
           <span class="key">←</span> LEFT &nbsp;
-          <span class="key">→</span> RIGHT
+          <span class="key">→</span> RIGHT <br /><br />
+          <span class="key">P</span> PAUSE &nbsp;
+          <span class="key">M</span> MUTE &nbsp;
+          <span class="key">ESC</span> ARCADE
         </div>
       </div>
     </div>
 
+    <script src="../arcade/audio.js"></script>
+    <script src="../arcade/input.js"></script>
+    <script src="../arcade/scores.js"></script>
+    <script src="../arcade/shell.js"></script>
     <script>
       // Game Constants
       const FPS = 60;
@@ -487,41 +480,10 @@
         height = canvas.height;
 
         // Event Listeners
+        // Steering is polled from Arcade.Input every frame; only the restart
+        // needs a press edge of its own.
         document.addEventListener("keydown", function (e) {
-          if (raceFinished && (e.key === "r" || e.key === "R")) {
-            startGame();
-            return;
-          }
-          switch (e.key) {
-            case "ArrowLeft":
-              keyLeft = true;
-              break;
-            case "ArrowRight":
-              keyRight = true;
-              break;
-            case "ArrowUp":
-              keyFaster = true;
-              break;
-            case "ArrowDown":
-              keySlower = true;
-              break;
-          }
-        });
-        document.addEventListener("keyup", function (e) {
-          switch (e.key) {
-            case "ArrowLeft":
-              keyLeft = false;
-              break;
-            case "ArrowRight":
-              keyRight = false;
-              break;
-            case "ArrowUp":
-              keyFaster = false;
-              break;
-            case "ArrowDown":
-              keySlower = false;
-              break;
-          }
+          if (raceFinished && (e.key === "r" || e.key === "R")) startGame();
         });
 
         requestAnimationFrame(frame);
@@ -634,6 +596,7 @@
         raceFinished = true;
         speed = 0;
         Sound.stopEngine();
+        Sound.stopMusic();
 
         const rows = playerLapTimes
           .map((t, i) => "LAP " + (i + 1) + "&nbsp;&nbsp;" + t.toFixed(2))
@@ -668,7 +631,7 @@
       }
 
       function update(dt) {
-        if (!gameRunning || raceFinished) return;
+        if (!gameRunning || raceFinished || Arcade.Shell.paused) return;
 
         // Handle countdown
         if (countdownActive) {
@@ -741,6 +704,11 @@
         }
 
         if (!isCrashed) {
+          keyLeft = Arcade.Input.held("left");
+          keyRight = Arcade.Input.held("right");
+          keyFaster = Arcade.Input.held("up");
+          keySlower = Arcade.Input.held("down");
+
           if (keyFaster) speed = speed + accel * dt;
           else if (keySlower) speed = speed + breaking * dt;
           else speed = speed + decel * dt;
@@ -1116,87 +1084,59 @@
       }
 
       // --- AUDIO SYSTEM ---
+      // --- AUDIO (shared module) ---
       const Sound = {
-        ctx: null,
         engineOsc: null,
         engineGain: null,
 
+        // Unlike the old one-shot schedule, this loop can be stopped.
+        music: Arcade.Audio.loop({
+          notes: [110, 110, 130, 110, 146, 130, 110, 98], // A2-ish bass line
+          tempo: 150,
+          type: "square",
+          volume: 0.1,
+          noteDuration: 0.13,
+        }),
+
         init: function () {
-          if (!this.ctx) {
-            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-          }
+          Arcade.Audio.context();
         },
 
         playBeep: function (freq) {
-          if (!this.ctx) this.init();
-          if (this.ctx.state === "suspended") this.ctx.resume();
-
-          const osc = this.ctx.createOscillator();
-          const gain = this.ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.value = freq || 440;
-          osc.connect(gain);
-          gain.connect(this.ctx.destination);
-          gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(
-            0.01,
-            this.ctx.currentTime + 0.3
-          );
-          osc.start(this.ctx.currentTime);
-          osc.stop(this.ctx.currentTime + 0.3);
+          Arcade.Audio.tone(freq || 440, {
+            duration: 0.3,
+            type: "sine",
+            volume: 0.3,
+          });
         },
 
         startMusic: function () {
-          if (!this.ctx) this.init();
-          if (this.ctx.state === "suspended") this.ctx.resume();
-
-          // Simple 8-bit Bass Line
-          const t = this.ctx.currentTime;
-          const tempo = 0.15;
-          const notes = [110, 110, 130, 110, 146, 130, 110, 98]; // A2 scaleish
-
-          const oscillator = this.ctx.createOscillator();
-          const gainNode = this.ctx.createGain();
-
-          oscillator.type = "square";
-          oscillator.connect(gainNode);
-          gainNode.connect(this.ctx.destination);
-
-          let now = t;
-          // Loop a few measures
-          for (let loop = 0; loop < 400; loop++) {
-            // 1 minute of music roughly
-            notes.forEach((note, i) => {
-              oscillator.frequency.setValueAtTime(note, now + i * tempo);
-              oscillator.frequency.setValueAtTime(
-                note,
-                now + i * tempo + tempo - 0.02
-              );
-            });
-            now += notes.length * tempo;
-          }
-
-          gainNode.gain.setValueAtTime(0.1, t);
-          oscillator.start(t);
-          oscillator.stop(now);
+          this.music.start();
         },
 
+        stopMusic: function () {
+          this.music.stop();
+        },
+
+        // A sustained drone whose pitch tracks speed - its own graph, but
+        // routed through the shared mute knob.
         startEngine: function () {
-          if (!this.ctx) this.init();
-          if (this.engineOsc) return; // already idling
-          this.engineOsc = this.ctx.createOscillator();
+          const ctxA = Arcade.Audio.context();
+          if (!ctxA || this.engineOsc) return; // already idling
+
+          this.engineOsc = ctxA.createOscillator();
           this.engineOsc.type = "sawtooth";
-          this.engineGain = this.ctx.createGain();
+          this.engineGain = ctxA.createGain();
           this.engineGain.gain.value = 0.05;
 
           // Low pass filter to muffle the harsh saw wave
-          const filter = this.ctx.createBiquadFilter();
+          const filter = ctxA.createBiquadFilter();
           filter.type = "lowpass";
           filter.frequency.value = 400;
 
           this.engineOsc.connect(filter);
           filter.connect(this.engineGain);
-          this.engineGain.connect(this.ctx.destination);
+          this.engineGain.connect(Arcade.Audio.output());
           this.engineOsc.start();
         },
 
@@ -1213,47 +1153,25 @@
         },
 
         updateEngine: function (speedPercent) {
-          if (this.engineOsc) {
-            // Pitch from 60Hz (idle) to 200Hz (max)
-            const freq = 60 + speedPercent * 140;
-            this.engineOsc.frequency.setTargetAtTime(
-              freq,
-              this.ctx.currentTime,
-              0.1
-            );
-
-            // LFO for "purr" effect
-            this.engineGain.gain.value = 0.05 + Math.random() * 0.01;
-          }
+          if (!this.engineOsc) return;
+          // Pitch from 60Hz (idle) to 200Hz (max)
+          const ctxA = Arcade.Audio.context();
+          this.engineOsc.frequency.setTargetAtTime(
+            60 + speedPercent * 140,
+            ctxA.currentTime,
+            0.1
+          );
+          // Slight wobble for "purr"
+          this.engineGain.gain.value = 0.05 + Math.random() * 0.01;
         },
 
         playCrash: function () {
-          if (!this.ctx) return;
-          const bufferSize = this.ctx.sampleRate * 0.5; // 0.5 sec noise
-          const buffer = this.ctx.createBuffer(
-            1,
-            bufferSize,
-            this.ctx.sampleRate
-          );
-          const data = buffer.getChannelData(0);
-          for (let i = 0; i < bufferSize; i++) {
-            data[i] = Math.random() * 2 - 1;
-          }
-
-          const noise = this.ctx.createBufferSource();
-          noise.buffer = buffer;
-          const gain = this.ctx.createGain();
-
-          // Envelope
-          gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(
-            0.01,
-            this.ctx.currentTime + 0.5
-          );
-
-          noise.connect(gain);
-          gain.connect(this.ctx.destination);
-          noise.start();
+          Arcade.Audio.noise({
+            duration: 0.5,
+            volume: 0.3,
+            filterFrom: 1200,
+            filterTo: 200,
+          });
         },
       };
 
@@ -1270,6 +1188,14 @@
       }
 
       // Update Init to allow audio context start
+      Arcade.Shell.init({
+        game: "poleposition",
+        onPause: () => Sound.stopEngine(),
+        onResume: () => {
+          if (raceStarted && !raceFinished && !isCrashed) Sound.startEngine();
+        },
+      });
+
       window.onload = init;
 
       // Hook up Engine Sound in Update

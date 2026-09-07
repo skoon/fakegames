@@ -31,6 +31,31 @@ const ROCK_SHADOW = 0x777777;
 const ROCK_HILIGHT = 0xAAAAAA;
 
 const STORE = { score: 0, lives: 3, level: 1 };
+const GAME_KEY = 'digdug';
+
+// Dig Dug shipped silent. These are the beats that most want a sound.
+const Sound = {
+    dig() {
+        Arcade.Audio.tone(90 + Math.random() * 30, { duration: 0.04, type: 'square', volume: 0.06 });
+    },
+    pump() {
+        Arcade.Audio.tone(300, { slideTo: 700, duration: 0.12, type: 'square', volume: 0.16 });
+    },
+    pop() {
+        Arcade.Audio.noise({ duration: 0.22, volume: 0.3, filterFrom: 1600, filterTo: 200 });
+    },
+    rock() {
+        Arcade.Audio.noise({ duration: 0.35, volume: 0.35, filterFrom: 500, filterTo: 60 });
+    },
+    die() {
+        Arcade.Audio.tone(300, { slideTo: 60, duration: 0.7, type: 'sawtooth', volume: 0.3 });
+    },
+    clear() {
+        [523, 659, 784, 1046].forEach((f, i) =>
+            Arcade.Audio.tone(f, { duration: 0.14, delay: i * 0.12, type: 'square', volume: 0.2 })
+        );
+    },
+};
 
 class DigDugScene extends Phaser.Scene {
     constructor() {
@@ -78,6 +103,14 @@ class DigDugScene extends Phaser.Scene {
         this.paused = false;
 
         this.updateUI();
+
+        // The shell owns the back link, pause and mute; Phaser needs telling.
+        Arcade.Shell.init({
+            game: GAME_KEY,
+            back: '../index.html',
+            onPause: () => this.scene.pause(),
+            onResume: () => this.scene.resume(),
+        });
     }
 
     update(_time, delta) {
@@ -380,6 +413,7 @@ class DigDugScene extends Phaser.Scene {
         if (this.isPumping) return;
         this.isPumping = true;
         this.pumpTimer = PUMP_DURATION;
+        Sound.pump();
 
         const dir = this.player.facing;
         let endX = this.player.x, endY = this.player.y;
@@ -440,6 +474,7 @@ class DigDugScene extends Phaser.Scene {
         const idx = this.enemies.indexOf(e);
         if (idx === -1) return;
         this.score += ENEMY_SCORE[cause][e.type];
+        Sound.pop();
         this.enemySprs[idx].destroy();
         // Both arrays are indexed in lockstep by updateEnemies, so they splice together.
         this.enemySprs.splice(idx, 1);
@@ -536,6 +571,7 @@ class DigDugScene extends Phaser.Scene {
             this.player.x = nx;
             this.player.y = ny;
             this.drawTile(nr, nc);
+            Sound.dig();
         } else if (tile === TILE_ROCK) {
             if (this.player.facing === 'left') this.player.x = (nc + 1) * TILE + TILE / 2;
             else if (this.player.facing === 'right') this.player.x = nc * TILE + TILE / 2;
@@ -701,6 +737,7 @@ class DigDugScene extends Phaser.Scene {
                         this.drawTile(t[0], t[1]);
                     }
                     rock.y += TILE;
+                    Sound.rock();
                 } else {
                     rock.falling = false;
                 }
@@ -752,6 +789,7 @@ class DigDugScene extends Phaser.Scene {
 
     playerDie() {
         if (this.respawnTimer > 0) return;
+        Sound.die();
         this.lives--;
         this.player.moving = false;
         this.isPumping = false;
@@ -787,9 +825,23 @@ class DigDugScene extends Phaser.Scene {
             fontSize: '16px', fontFamily: 'monospace', color: '#ffffff'
         }).setOrigin(0.5).setDepth(20);
 
-        const restartText = this.add.text(WIDTH / 2, HEIGHT / 2 + 44, 'PRESS SPACE TO RESTART', {
+        this.add.text(WIDTH / 2, HEIGHT / 2 + 44, 'PRESS SPACE TO RESTART', {
             fontSize: '12px', fontFamily: 'monospace', color: '#ffff00'
         }).setOrigin(0.5).setDepth(20);
+
+        const table = this.add.text(WIDTH / 2, HEIGHT / 2 + 80, '', {
+            fontSize: '12px', fontFamily: 'monospace', color: '#ffffff', align: 'center'
+        }).setOrigin(0.5, 0).setDepth(20);
+
+        const showTable = () => table.setText(Arcade.Scores.format(GAME_KEY));
+
+        if (Arcade.Scores.qualifies(GAME_KEY, this.score)) {
+            Arcade.Scores.promptInitials(this.score, (initials) => {
+                Arcade.Scores.submit(GAME_KEY, initials, this.score);
+                showTable();
+            });
+        }
+        showTable();
 
         this.input.keyboard.once('keydown-SPACE', () => {
             STORE.score = 0;
@@ -803,6 +855,8 @@ class DigDugScene extends Phaser.Scene {
         if (this.enemies.length === 0 && !this.isDead && !this.levelOver) {
             this.levelOver = true;
             this.paused = true;
+
+            Sound.clear();
 
             this.add.text(WIDTH / 2, HEIGHT / 2, 'LEVEL CLEAR!', {
                 fontSize: '20px', fontFamily: 'monospace', color: '#00ff00'

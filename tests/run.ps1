@@ -64,13 +64,21 @@ function Build-Sources {
   New-Item -ItemType Directory -Path $buildDir | Out-Null
 
   # Games with a separate .js file are copied as-is.
-  Copy-Item (Join-Path $rootDir "fakedigdug\js\game.js") (Join-Path $buildDir "digdug.js")
+  $standalone = @{
+    "digdug.js"    = "fakedigdug\js\game.js"
+    "spyhunter.js" = "fakespyhunter\game.js"
+  }
+  foreach ($name in $standalone.Keys) {
+    Copy-Item (Join-Path $rootDir $standalone[$name]) (Join-Path $buildDir $name)
+  }
 
   # Games with inline source are extracted.
   $inline = @{
-    "tempest.js"        = "faketempest\faketempest.html"
-    "spaceinvaders.js"  = "fakespaceinvaders\fakespaceinvaders.html"
-    "poleposition.js"   = "fakepoleposition\fakepoleposition.html"
+    "tempest.js"       = "faketempest\faketempest.html"
+    "spaceinvaders.js" = "fakespaceinvaders\fakespaceinvaders.html"
+    "poleposition.js"  = "fakepoleposition\fakepoleposition.html"
+    "breakout.js"      = "fakebreakout\fakebreakout.html"
+    "asteroids.js"     = "fakeasteroids\faskeasteroids.html"
   }
   foreach ($name in $inline.Keys) {
     Export-InlineScript -HtmlPath (Join-Path $rootDir $inline[$name]) `

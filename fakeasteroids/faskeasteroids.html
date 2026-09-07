@@ -32,6 +32,7 @@
         pointer-events: none;
       }
     </style>
+    <link rel="stylesheet" href="../arcade/arcade.css" />
   </head>
 
   <body>
@@ -39,17 +40,23 @@
       <h1 id="score">SCORE: 0</h1>
       <h3 id="lives">LIVES: 3</h3>
       <p id="message" style="display: none; color: #f00; font-weight: bold">
-        GAME OVER - PRESS R TO RESTART
+        GAME OVER - PRESS SPACE TO RESTART
       </p>
+      <pre id="scores" style="color: #ff0; font-size: 14px; margin-top: 8px"></pre>
     </div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
+    <script src="../arcade/audio.js"></script>
+    <script src="../arcade/input.js"></script>
+    <script src="../arcade/scores.js"></script>
+    <script src="../arcade/shell.js"></script>
     <script>
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
       const scoreEl = document.getElementById("score");
       const livesEl = document.getElementById("lives");
       const msgEl = document.getElementById("message");
+      const scoresEl = document.getElementById("scores");
 
       // --- Game Constants ---
       const FPS = 60;
@@ -93,175 +100,83 @@
         timer: 0, // Frames until next UFO
       };
 
-      // --- Audio System ---
-      let audioCtx = null;
-      let musicRunning = false;
-      let musicNote = 0;
-      let musicTempo = 1.0; // Seconds between beats
+      // --- Audio (shared module) ---
+      const GAME_KEY = "asteroids";
       let ufoOsc = null;
       let ufoGain = null;
 
-      function initAudio() {
-        if (audioCtx) {
-          if (audioCtx.state === "suspended") {
-            audioCtx.resume();
-          }
-          return;
-        }
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === "suspended") {
-          audioCtx.resume();
-        }
+      // Two-note heartbeat that quickens as the field is cleared.
+      const music = Arcade.Audio.loop({
+        notes: [82.4, 73.4], // low E, low D
+        tempo: 1000,
+        type: "square",
+        volume: 0.05,
+        noteDuration: 0.2,
+      });
 
-        // If audio was just initialized, ensure music loop starts
-        if (!musicRunning && !gameOver) {
-          musicRunning = true;
-          playMusicNote();
-        }
+      function initAudio() {
+        Arcade.Audio.context();
+        if (!music.isPlaying() && !gameOver) music.start();
       }
 
       function playLaserSound() {
-        if (!audioCtx) return;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = "sawtooth";
-        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(
-          200,
-          audioCtx.currentTime + 0.1
-        );
-        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(
-          0.01,
-          audioCtx.currentTime + 0.1
-        );
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.1);
+        Arcade.Audio.tone(800, {
+          slideTo: 200,
+          duration: 0.1,
+          type: "sawtooth",
+          volume: 0.1,
+        });
       }
 
       function playAsteroidBreakSound() {
-        if (!audioCtx) return;
-        const bufferSize = audioCtx.sampleRate * 0.1;
-        const buffer = audioCtx.createBuffer(
-          1,
-          bufferSize,
-          audioCtx.sampleRate
-        );
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.random() * 2 - 1;
-        }
-        const noise = audioCtx.createBufferSource();
-        noise.buffer = buffer;
-        const filter = audioCtx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.value = 1000;
-        const gain = audioCtx.createGain();
-        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(
-          0.01,
-          audioCtx.currentTime + 0.1
-        );
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(audioCtx.destination);
-        noise.start();
+        Arcade.Audio.noise({
+          duration: 0.1,
+          volume: 0.2,
+          filterFrom: 1000,
+          filterTo: 1000,
+        });
       }
 
       function playExplosionSound() {
-        if (!audioCtx) return;
-        const bufferSize = audioCtx.sampleRate * 0.4;
-        const buffer = audioCtx.createBuffer(
-          1,
-          bufferSize,
-          audioCtx.sampleRate
-        );
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          data[i] = Math.random() * 2 - 1;
-        }
-        const noise = audioCtx.createBufferSource();
-        noise.buffer = buffer;
-        const filter = audioCtx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
-        filter.frequency.exponentialRampToValueAtTime(
-          100,
-          audioCtx.currentTime + 0.4
-        );
-        const gain = audioCtx.createGain();
-        gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(
-          0.01,
-          audioCtx.currentTime + 0.4
-        );
-        noise.connect(filter);
-        filter.connect(gain);
-        gain.connect(audioCtx.destination);
-        noise.start();
-      }
-
-      function playMusicNote() {
-        if (!audioCtx || gameOver) {
-          musicRunning = false;
-          return;
-        }
-        musicRunning = true;
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = "square";
-        // Alternating notes: Low E (82.4Hz) and Low D (73.4Hz)
-        const freq = musicNote === 0 ? 82.4 : 73.4;
-        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(
-          0.001,
-          audioCtx.currentTime + 0.2
-        );
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.2);
-        musicNote = 1 - musicNote;
-
-        setTimeout(playMusicNote, musicTempo * 1000);
+        Arcade.Audio.noise({
+          duration: 0.4,
+          volume: 0.5,
+          filterFrom: 1000,
+          filterTo: 100,
+        });
       }
 
       function updateMusicTempo() {
-        // Base is 1 second, decreases as asteroids decrease
-        const count = asteroids.length;
-        musicTempo = 0.2 + count * 0.15; // Faster as count gets lower
-        if (musicTempo > 1.0) musicTempo = 1.0;
-        if (musicTempo < 0.2) musicTempo = 0.2;
+        // Faster as the field empties, floored so it stays playable.
+        music.setTempo(Math.min(1000, Math.max(200, 200 + asteroids.length * 150)));
       }
 
       function startUfoSound() {
-        if (!audioCtx || ufoOsc) return;
-        ufoOsc = audioCtx.createOscillator();
-        ufoGain = audioCtx.createGain();
+        const actx = Arcade.Audio.context();
+        if (!actx || ufoOsc) return;
+        ufoOsc = actx.createOscillator();
+        ufoGain = actx.createGain();
         ufoOsc.type = "triangle";
-        ufoOsc.frequency.setValueAtTime(200, audioCtx.currentTime);
+        ufoOsc.frequency.setValueAtTime(200, actx.currentTime);
         ufoOsc.frequency.linearRampToValueAtTime(
           1000,
-          audioCtx.currentTime + 1
+          actx.currentTime + 1
         ); // Rising siren
 
         // Loop the siren effect manually or use LFO. For retro style, simple loop is okay-ish,
         // but let's use an LFO for better siren effect.
-        const lfo = audioCtx.createOscillator();
+        const lfo = actx.createOscillator();
         lfo.type = "sawtooth";
         lfo.frequency.value = 8; // 8 Hz wobble
-        const lfoGain = audioCtx.createGain();
+        const lfoGain = actx.createGain();
         lfoGain.gain.value = 50;
         lfo.connect(lfoGain);
         lfoGain.connect(ufoOsc.frequency);
         lfo.start();
 
-        ufoGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        ufoGain.gain.setValueAtTime(0.05, actx.currentTime);
         ufoOsc.connect(ufoGain);
-        ufoGain.connect(audioCtx.destination);
+        ufoGain.connect(Arcade.Audio.output());
         ufoOsc.start();
         ufoOsc.lfo = lfo; // Attach lfo to stop it later
       }
@@ -292,45 +207,45 @@
         explodeTime: 0, // Added for the 'exploding' check in ship drawing
       };
 
-      // --- Input Handling ---
-      document.addEventListener("keydown", keyDown);
-      document.addEventListener("keyup", keyUp);
+      // --- Input Handling (shared module, polled each frame) ---
       document.addEventListener("mousedown", () => initAudio());
 
-      function keyDown(ev) {
+      function readInput() {
         initAudio();
 
-        if (gameOver && ev.code === "KeyR") {
-          resetGame();
+        if (gameOver) {
+          ship.rot = 0;
+          ship.thrusting = false;
+          if (Arcade.Input.justPressed("fire")) resetGame();
           return;
         }
 
-        switch (ev.code) {
-          case "Space":
-            shoot();
-            break;
-          case "ArrowLeft":
-            ship.rot = TURN_RATE;
-            break;
-          case "ArrowRight":
-            ship.rot = -TURN_RATE;
-            break;
-          case "ArrowUp":
-            ship.thrusting = true;
-            break;
-        }
+        if (Arcade.Input.held("left")) ship.rot = TURN_RATE;
+        else if (Arcade.Input.held("right")) ship.rot = -TURN_RATE;
+        else ship.rot = 0;
+
+        ship.thrusting = Arcade.Input.held("up");
+
+        if (Arcade.Input.justPressed("fire")) shoot();
       }
 
-      function keyUp(ev) {
-        switch (ev.code) {
-          case "ArrowLeft":
-          case "ArrowRight":
-            ship.rot = 0;
-            break;
-          case "ArrowUp":
-            ship.thrusting = false;
-            break;
+      function endGame() {
+        gameOver = true;
+        music.stop();
+        stopUfoSound();
+        msgEl.style.display = "block";
+
+        if (Arcade.Scores.qualifies(GAME_KEY, score)) {
+          Arcade.Scores.promptInitials(score, (initials) => {
+            Arcade.Scores.submit(GAME_KEY, initials, score);
+            renderScores();
+          });
         }
+        renderScores();
+      }
+
+      function renderScores() {
+        scoresEl.textContent = Arcade.Scores.format(GAME_KEY);
       }
 
       // --- Logic Helpers ---
@@ -495,13 +410,19 @@
           createAsteroid(x, y, Math.ceil(ROIDS_SIZE));
         }
         updateMusicTempo();
-        if (!musicRunning) {
-          playMusicNote();
-        }
+        music.start();
+        msgEl.style.display = "none";
+        renderScores();
       }
 
       // --- Main Game Loop ---
       function update() {
+        if (Arcade.Shell.paused) {
+          requestAnimationFrame(update);
+          return;
+        }
+        readInput();
+
         const cosA = Math.cos(ship.a);
         const sinA = Math.sin(ship.a);
 
@@ -627,9 +548,8 @@
             livesEl.innerText = "LIVES: " + lives;
 
             if (lives <= 0) {
-              gameOver = true;
               playExplosionSound();
-              msgEl.style.display = "block";
+              endGame();
             } else {
               playExplosionSound();
               // Respawn
@@ -726,10 +646,7 @@
               livesEl.innerText = "LIVES: " + lives;
               playExplosionSound();
 
-              if (lives <= 0) {
-                gameOver = true;
-                msgEl.style.display = "block";
-              } else {
+              if (lives <= 0) endGame(); else {
                 ship.x = canvas.width / 2;
                 ship.y = canvas.height / 2;
                 ship.blinkNum = Math.ceil(INVULN_TIME * FPS);
@@ -796,6 +713,8 @@
       }
 
       // Start Game
+      Arcade.Shell.init({ game: GAME_KEY });
+      renderScores();
       resetGame();
       update();
     </script>

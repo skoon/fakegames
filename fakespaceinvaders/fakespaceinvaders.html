@@ -135,6 +135,7 @@
         image-rendering: pixelated;
       }
     </style>
+    <link rel="stylesheet" href="../arcade/arcade.css" />
   </head>
   <body>
     <div class="game-container">
@@ -164,6 +165,11 @@
               <p>Row 2: 10 pts</p>
               <p>Row 1 (Bottom): 5 pts</p>
             </div>
+            <h3 style="margin-top: 20px">HIGH SCORES</h3>
+            <pre id="scoreTable" style="font-size: 14px; line-height: 1.6"></pre>
+            <p style="margin-top: 14px; font-size: 12px">
+              P Pause &middot; M Mute &middot; ESC Arcade
+            </p>
           </div>
         </div>
       </div>
@@ -182,6 +188,10 @@
       </div>
     </div>
 
+    <script src="../arcade/audio.js"></script>
+    <script src="../arcade/input.js"></script>
+    <script src="../arcade/scores.js"></script>
+    <script src="../arcade/shell.js"></script>
     <script>
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
@@ -206,8 +216,7 @@
       // Game state
       let gameState = "start"; // 'start', 'playing', 'gameover', 'win'
       let score = 0;
-      let highScore =
-        parseInt(localStorage.getItem("spaceInvadersHighScore")) || 0;
+      const GAME_KEY = "spaceinvaders";
       let lives = 3;
       let wave = 1;
 
@@ -220,13 +229,6 @@
         speed: 8,
       };
 
-      // Input
-      let keys = {
-        left: false,
-        right: false,
-        space: false,
-      };
-      let spacePressed = false;
 
       // Aliens
       let aliens = [];
@@ -320,144 +322,51 @@
       // Points per row (bottom to top)
       const pointsPerRow = [5, 10, 15, 20, 25, 30];
 
-      // Audio Context and Sound Manager
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
+      // Audio, via the shared module - one context for the whole cabinet.
       const SoundManager = {
-        musicTimer: null,
-        isMusicPlaying: false,
-        noteIndex: 0,
-        baseTempo: 1000,
-        currentTempo: 1000,
-        notes: [180, 170, 160, 150], // Descending bass line frequencies
+        // The original filtered a sawtooth through a 200Hz lowpass for a
+        // muffled bass; a triangle gets the same rounded character directly.
+        music: Arcade.Audio.loop({
+          notes: [180, 170, 160, 150], // descending bass line
+          tempo: 1000,
+          type: "triangle",
+          volume: 0.1,
+          noteDuration: 0.05,
+        }),
 
         init() {
-          if (audioCtx.state === "suspended") {
-            audioCtx.resume();
-          }
+          Arcade.Audio.context();
         },
 
         playShoot() {
-          if (audioCtx.state === "suspended") audioCtx.resume();
-
-          const osc = audioCtx.createOscillator();
-          const gainNode = audioCtx.createGain();
-
-          osc.type = "square";
-          osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-          osc.frequency.exponentialRampToValueAtTime(
-            110,
-            audioCtx.currentTime + 0.1
-          );
-
-          gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(
-            0.01,
-            audioCtx.currentTime + 0.1
-          );
-
-          osc.connect(gainNode);
-          gainNode.connect(audioCtx.destination);
-
-          osc.start();
-          osc.stop(audioCtx.currentTime + 0.1);
-        },
-
-        playMusicNote() {
-          if (!this.isMusicPlaying) return;
-
-          const osc = audioCtx.createOscillator();
-          const gainNode = audioCtx.createGain();
-
-          osc.type = "sawtooth";
-          osc.frequency.setValueAtTime(
-            this.notes[this.noteIndex],
-            audioCtx.currentTime
-          );
-
-          // Short, percussive envelope
-          gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(
-            0.001,
-            audioCtx.currentTime + 0.05
-          );
-
-          // Lowpass filter for "muffled" bass sound
-          const filter = audioCtx.createBiquadFilter();
-          filter.type = "lowpass";
-          filter.frequency.value = 200;
-
-          osc.connect(filter);
-          filter.connect(gainNode);
-          gainNode.connect(audioCtx.destination);
-
-          osc.start();
-          osc.stop(audioCtx.currentTime + 0.05);
-
-          this.noteIndex = (this.noteIndex + 1) % 4;
-          this.musicTimer = setTimeout(
-            () => this.playMusicNote(),
-            this.currentTempo
-          );
+          Arcade.Audio.tone(880, {
+            slideTo: 110,
+            duration: 0.1,
+            type: "square",
+            volume: 0.3,
+          });
         },
 
         startMusic() {
-          if (this.isMusicPlaying) return;
-          this.isMusicPlaying = true;
-          this.noteIndex = 0;
-          this.currentTempo = this.baseTempo;
-          this.playMusicNote();
+          this.music.start();
         },
 
         stopMusic() {
-          this.isMusicPlaying = false;
-          if (this.musicTimer) clearTimeout(this.musicTimer);
+          this.music.stop();
         },
 
         updateTempo(activeAliens, totalAliens) {
-          // Tempo ranges from 1000ms (slow) down to 100ms (fast)
-          const ratio = activeAliens / totalAliens;
-          this.currentTempo = Math.max(100, 1000 * ratio);
+          // 1000ms when the wave is full, down to 100ms as it thins out.
+          this.music.setTempo(Math.max(100, 1000 * (activeAliens / totalAliens)));
         },
 
         playExplosion() {
-          if (audioCtx.state === "suspended") audioCtx.resume();
-
-          const bufferSize = audioCtx.sampleRate * 1.0; // 1 second
-          const buffer = audioCtx.createBuffer(
-            1,
-            bufferSize,
-            audioCtx.sampleRate
-          );
-          const data = buffer.getChannelData(0);
-
-          for (let i = 0; i < bufferSize; i++) {
-            data[i] = Math.random() * 2 - 1;
-          }
-
-          const noise = audioCtx.createBufferSource();
-          noise.buffer = buffer;
-
-          const filter = audioCtx.createBiquadFilter();
-          filter.type = "lowpass";
-          filter.frequency.setValueAtTime(1000, audioCtx.currentTime);
-          filter.frequency.exponentialRampToValueAtTime(
-            100,
-            audioCtx.currentTime + 1.0
-          );
-
-          const gainNode = audioCtx.createGain();
-          gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
-          gainNode.gain.exponentialRampToValueAtTime(
-            0.01,
-            audioCtx.currentTime + 1.0
-          );
-
-          noise.connect(filter);
-          filter.connect(gainNode);
-          gainNode.connect(audioCtx.destination);
-
-          noise.start();
+          Arcade.Audio.noise({
+            duration: 1.0,
+            volume: 0.5,
+            filterFrom: 1000,
+            filterTo: 100,
+          });
         },
       };
 
@@ -637,17 +546,17 @@
 
       // Update functions
       function updatePlayer() {
-        if (keys.left && player.x > 0) {
+        if (Arcade.Input.held("left") && player.x > 0) {
           player.x -= player.speed;
         }
-        if (keys.right && player.x < CANVAS_WIDTH - player.width) {
+        if (Arcade.Input.held("right") && player.x < CANVAS_WIDTH - player.width) {
           player.x += player.speed;
         }
 
-        // Fire bolt
+        // Fire bolt. The shared input layer owns press-edge detection, so the
+        // hand-rolled spacePressed latch is gone.
         if (
-          keys.space &&
-          !spacePressed &&
+          Arcade.Input.justPressed("fire") &&
           playerBolts.length < MAX_PLAYER_BOLTS
         ) {
           playerBolts.push({
@@ -656,10 +565,6 @@
             speed: 10,
           });
           SoundManager.playShoot();
-          spacePressed = true;
-        }
-        if (!keys.space) {
-          spacePressed = false;
         }
       }
 
@@ -909,12 +814,16 @@
       function gameOver() {
         SoundManager.stopMusic();
         gameState = "gameover";
-        if (score > highScore) {
-          highScore = score;
-          localStorage.setItem("spaceInvadersHighScore", highScore);
-        }
         document.getElementById("finalScore").textContent = score;
         document.getElementById("gameOverScreen").style.display = "flex";
+
+        if (Arcade.Scores.qualifies(GAME_KEY, score)) {
+          Arcade.Scores.promptInitials(score, (initials) => {
+            Arcade.Scores.submit(GAME_KEY, initials, score);
+            updateUI();
+          });
+        }
+        updateUI();
       }
 
       function win() {
@@ -926,8 +835,10 @@
 
       function updateUI() {
         document.getElementById("score").textContent = score;
-        document.getElementById("highScore").textContent = highScore;
+        document.getElementById("highScore").textContent = Arcade.Scores.best(GAME_KEY);
         document.getElementById("lives").textContent = lives;
+        document.getElementById("scoreTable").textContent =
+          Arcade.Scores.format(GAME_KEY);
       }
 
       // Main game loop
@@ -945,10 +856,14 @@
         }
 
         if (gameState === "playing") {
-          updatePlayer();
-          updateAliens();
-          updateBolts();
-          updateParticles();
+          if (!Arcade.Shell.paused) {
+            updatePlayer();
+            updateAliens();
+            updateBolts();
+            updateParticles();
+          }
+        } else {
+          handleMenuInput();
         }
 
         // Draw game objects
@@ -961,46 +876,29 @@
         requestAnimationFrame(gameLoop);
       }
 
-      // Event listeners
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "ArrowLeft") keys.left = true;
-        if (e.key === "ArrowRight") keys.right = true;
-        if (e.key === " ") {
-          e.preventDefault();
-          keys.space = true;
+      // Fire starts a run, restarts after a loss, and advances after a win.
+      function handleMenuInput() {
+        if (!Arcade.Input.justPressed("fire")) return;
 
-          if (gameState === "start") {
-            gameState = "playing";
-            document.getElementById("startScreen").style.display = "none";
-            score = 0;
-            lives = 3;
-            wave = 1;
-            init();
-          } else if (gameState === "gameover") {
-            gameState = "playing";
-            document.getElementById("gameOverScreen").style.display = "none";
-            score = 0;
-            lives = 3;
-            wave = 1;
-            init();
-          } else if (gameState === "win") {
-            gameState = "playing";
-            document.getElementById("winScreen").style.display = "none";
-            wave++;
-            init();
-          }
+        if (gameState === "start" || gameState === "gameover") {
+          const screen =
+            gameState === "start" ? "startScreen" : "gameOverScreen";
+          document.getElementById(screen).style.display = "none";
+          gameState = "playing";
+          score = 0;
+          lives = 3;
+          wave = 1;
+          init();
+        } else if (gameState === "win") {
+          document.getElementById("winScreen").style.display = "none";
+          gameState = "playing";
+          wave++;
+          init();
         }
-      });
+      }
 
-      document.addEventListener("keyup", (e) => {
-        if (e.key === "ArrowLeft") keys.left = false;
-        if (e.key === "ArrowRight") keys.right = false;
-        if (e.key === " ") keys.space = false;
-      });
-
-      // Initialize high score display and start game loop
-      document.getElementById("highScore").textContent = highScore;
+      Arcade.Shell.init({ game: GAME_KEY });
+      updateUI();
       gameLoop();
     </script>
   </body>
-</html>

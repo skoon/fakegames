@@ -4,11 +4,15 @@
 <body>
 <canvas id="gameCanvas" width="800" height="800"></canvas>
 <div id="hud"><span id="score">0</span><span id="level">1</span><span id="lives">3</span></div>
-<div id="startScreen"></div>
-<div id="gameOver"></div>
+<div id="startScreen"><pre id="startScores"></pre></div>
+<div id="gameOver"><pre id="endScores"></pre></div>
 <pre id="test-report">running</pre>
 <script src="../lib/rig.js"></script>
 <script src="../lib/stubs.js"></script>
+<script src="../../arcade/audio.js"></script>
+<script src="../../arcade/input.js"></script>
+<script src="../../arcade/scores.js"></script>
+<script src="../../arcade/shell.js"></script>
 <script src="../.build/tempest.js"></script>
 <script src="../suites/tempest.js"></script>
 </body>

@@ -83,7 +83,17 @@
         margin-top: 30px;
         line-height: 1.8;
       }
+
+      .scores {
+        font-family: "Courier New", monospace;
+        font-size: 16px;
+        color: #ff0;
+        margin: 24px 0 0;
+        line-height: 1.6;
+        text-shadow: 0 0 8px #ff0;
+      }
     </style>
+    <link rel="stylesheet" href="../arcade/arcade.css" />
   </head>
   <body>
     <div id="gameContainer">
@@ -96,17 +106,24 @@
       <div id="startScreen">
         <h1>FAKE TEMPEST</h1>
         <div>Press SPACE to Start</div>
+        <pre class="scores" id="startScores"></pre>
         <div class="controls">
           ← → Arrow Keys to Move<br />
-          SPACE to Fire
+          SPACE to Fire<br />
+          P Pause &middot; M Mute &middot; ESC Arcade
         </div>
       </div>
       <div id="gameOver">
         GAME OVER
+        <pre class="scores" id="endScores"></pre>
         <span>Press SPACE to Restart</span>
       </div>
     </div>
 
+    <script src="../arcade/audio.js"></script>
+    <script src="../arcade/input.js"></script>
+    <script src="../arcade/scores.js"></script>
+    <script src="../arcade/shell.js"></script>
     <script>
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
@@ -142,12 +159,11 @@
       let enemiesKilledThisLevel = 0;
       let enemiesPerLevel = 10;
 
-      // Input handling
-      const keys = {
-        left: false,
-        right: false,
-        space: false,
-      };
+      const GAME_KEY = "tempest";
+      const startScores = document.getElementById("startScores");
+      const endScores = document.getElementById("endScores");
+
+      // Input, audio, scores and the pause overlay all come from arcade/.
       let lastFireTime = 0;
       const fireRate = 150;
       let lastMoveTime = 0;
@@ -456,41 +472,36 @@
         playSound(880, 0.1, "square");
       }
 
-      // One context for the whole session. Creating one per sound exhausts the
-      // browser's concurrent-context limit and silently kills all audio.
-      let audioCtx = null;
-
-      function getAudioContext() {
-        if (!audioCtx) {
-          const AudioCtor = window.AudioContext || window.webkitAudioContext;
-          if (!AudioCtor) return null;
-          audioCtx = new AudioCtor();
-        }
-        if (audioCtx.state === "suspended") audioCtx.resume();
-        return audioCtx;
+      // The shared module owns the single AudioContext and the mute knob.
+      function playSound(freq, duration, type = "sine") {
+        Arcade.Audio.tone(freq, {
+          duration: duration,
+          type: type,
+          volume: 0.3,
+        });
       }
 
-      function playSound(freq, duration, type = "sine") {
-        const ctx = getAudioContext();
-        if (!ctx) return;
+      function renderScores() {
+        const table = Arcade.Scores.format(GAME_KEY);
+        startScores.textContent = table;
+        endScores.textContent = table;
+      }
 
-        const oscillator = ctx.createOscillator();
-        const gainNode = ctx.createGain();
+      function endGame() {
+        // A single frame can take the last life twice - an enemy at the rim and
+        // a spiker's spike in the same lane - which would stack two prompts.
+        if (gameState === "gameOver") return;
 
-        oscillator.connect(gainNode);
-        gainNode.connect(ctx.destination);
+        gameState = "gameOver";
+        gameOverScreen.style.display = "block";
 
-        oscillator.frequency.value = freq;
-        oscillator.type = type;
-
-        gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(
-          0.01,
-          ctx.currentTime + duration
-        );
-
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + duration);
+        if (Arcade.Scores.qualifies(GAME_KEY, score)) {
+          Arcade.Scores.promptInitials(score, (initials) => {
+            Arcade.Scores.submit(GAME_KEY, initials, score);
+            renderScores();
+          });
+        }
+        renderScores();
       }
 
       // Speeds below were tuned against 60Hz frames, so scale them by how long
@@ -498,21 +509,21 @@
       const FRAME_MS = 1000 / 60;
 
       function update(deltaTime) {
-        const now = Date.now();
+        const now = Arcade.Shell.now();
         const frameScale = deltaTime / FRAME_MS;
 
         // Player movement
-        if (keys.left && now - lastMoveTime > moveRate) {
+        if (Arcade.Input.held("left") && now - lastMoveTime > moveRate) {
           player.lane = (player.lane - 1 + NUM_LANES) % NUM_LANES;
           lastMoveTime = now;
         }
-        if (keys.right && now - lastMoveTime > moveRate) {
+        if (Arcade.Input.held("right") && now - lastMoveTime > moveRate) {
           player.lane = (player.lane + 1) % NUM_LANES;
           lastMoveTime = now;
         }
 
         // Firing
-        if (keys.space && now - lastFireTime > fireRate) {
+        if (Arcade.Input.held("fire") && now - lastFireTime > fireRate) {
           fireBullet();
           lastFireTime = now;
         }
@@ -577,10 +588,7 @@
             createExplosion(pos.x, pos.y, "#ff0", 30);
             playSound(150, 0.5, "sawtooth");
 
-            if (lives <= 0) {
-              gameState = "gameOver";
-              gameOverScreen.style.display = "block";
-            }
+            if (lives <= 0) endGame();
             continue;
           }
 
@@ -655,10 +663,7 @@
             createExplosion(pos.x, pos.y, "#0f0", 20);
             playSound(100, 0.3, "sawtooth");
 
-            if (lives <= 0) {
-              gameState = "gameOver";
-              gameOverScreen.style.display = "block";
-            }
+            if (lives <= 0) endGame();
           }
         }
 
@@ -724,8 +729,13 @@
         lastFrameTime = timestamp;
 
         if (gameState === "playing") {
-          update(deltaTime);
-          render();
+          if (!Arcade.Shell.paused) {
+            update(deltaTime);
+            render();
+          }
+        } else if (Arcade.Input.justPressed("fire")) {
+          // Start screen and game over both wait on the fire button.
+          startGame();
         }
 
         requestAnimationFrame(gameLoop);
@@ -740,7 +750,7 @@
         enemies = [];
         spikes = [];
         particles = [];
-        lastEnemySpawn = Date.now();
+        lastEnemySpawn = Arcade.Shell.now();
         enemySpawnRate = 2000;
         enemiesKilledThisLevel = 0;
         enemiesPerLevel = 10;
@@ -755,27 +765,9 @@
         gameState = "playing";
       }
 
-      // Event listeners
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "ArrowLeft") keys.left = true;
-        if (e.key === "ArrowRight") keys.right = true;
-        if (e.key === " ") {
-          e.preventDefault();
-          keys.space = true;
-
-          if (gameState === "start" || gameState === "gameOver") {
-            startGame();
-          }
-        }
-      });
-
-      document.addEventListener("keyup", (e) => {
-        if (e.key === "ArrowLeft") keys.left = false;
-        if (e.key === "ArrowRight") keys.right = false;
-        if (e.key === " ") keys.space = false;
-      });
-
       // Initialize
+      Arcade.Shell.init({ game: GAME_KEY });
+      renderScores();
       calculateLaneGeometry();
 
       // Initial render of tube

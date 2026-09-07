@@ -108,6 +108,7 @@
         }
       }
     </style>
+    <link rel="stylesheet" href="../arcade/arcade.css" />
   </head>
 
   <body>
@@ -125,13 +126,16 @@
         <div class="space-y-2 text-gray-300">
           <p>Move: <span class="text-white font-bold">Arrow Keys</span></p>
           <p>Launch: <span class="text-white font-bold">Space Bar</span></p>
+          <p class="text-sm text-gray-400">P Pause &middot; M Mute &middot; ESC Arcade</p>
         </div>
+        <pre class="high-scores mt-4 text-yellow-400 text-sm leading-6"></pre>
         <button class="btn" onclick="initGame()">START GAME</button>
       </div>
 
       <div id="game-over-overlay" class="overlay" style="display: none">
         <h1 id="end-title" class="text-4xl font-bold mb-4">GAME OVER</h1>
         <p id="final-score" class="text-xl text-gray-400">Final Score: 0</p>
+        <pre class="high-scores mt-4 text-yellow-400 text-sm leading-6"></pre>
         <button class="btn" onclick="resetGame()">PLAY AGAIN</button>
       </div>
 
@@ -144,6 +148,10 @@
       </div>
     </div>
 
+    <script src="../arcade/audio.js"></script>
+    <script src="../arcade/input.js"></script>
+    <script src="../arcade/scores.js"></script>
+    <script src="../arcade/shell.js"></script>
     <script>
       /**
        * ARENA CONFIGURATION
@@ -190,7 +198,33 @@
       let currentLevel = 1;
       let gameActive = false;
       let ballActive = false;
-      let keys = {};
+      const GAME_KEY = "breakout";
+
+      // Breakout was the only silent cabinet. Pitch rises toward the top rows,
+      // the way the original does.
+      const Sound = {
+        brick(row) {
+          Arcade.Audio.tone(Math.max(180, 640 - Math.min(row, 7) * 60), {
+            duration: 0.06,
+            type: "square",
+            volume: 0.18,
+          });
+        },
+        paddle() {
+          Arcade.Audio.tone(160, { duration: 0.07, type: "square", volume: 0.18 });
+        },
+        wall() {
+          Arcade.Audio.tone(320, { duration: 0.04, type: "square", volume: 0.12 });
+        },
+        lost() {
+          Arcade.Audio.noise({ duration: 0.5, volume: 0.35, filterFrom: 800, filterTo: 80 });
+        },
+        levelUp() {
+          [523, 659, 784].forEach((f, i) =>
+            Arcade.Audio.tone(f, { duration: 0.12, delay: i * 0.1, type: "square", volume: 0.2 })
+          );
+        },
+      };
       let blocks = [];
       let particles = [];
 
@@ -307,6 +341,7 @@
               width: blockWidth - 2,
               height: blockHeight - 2,
               color: color,
+              row: r,
               active: true,
             });
           }
@@ -358,6 +393,7 @@
       function nextLevel() {
         currentLevel++;
         gameActive = false;
+        Sound.levelUp();
         ballActive = false;
 
         // Show brief "Level Complete" message or just transition
@@ -436,6 +472,20 @@
         endTitle.innerText = won ? "VICTORY!" : "GAME OVER";
         endTitle.style.color = won ? "#22c55e" : "#ef4444";
         finalScore.innerText = `Final Score: ${score}`;
+
+        if (Arcade.Scores.qualifies(GAME_KEY, score)) {
+          Arcade.Scores.promptInitials(score, (initials) => {
+            Arcade.Scores.submit(GAME_KEY, initials, score);
+            renderScores();
+          });
+        }
+        renderScores();
+      }
+
+      function renderScores() {
+        for (const el of document.querySelectorAll(".high-scores")) {
+          el.textContent = Arcade.Scores.format(GAME_KEY);
+        }
       }
 
       function triggerShake() {
@@ -444,20 +494,25 @@
         container.classList.add("shake");
       }
 
-      window.addEventListener("keydown", (e) => {
-        keys[e.code] = true;
-        if (e.code === "Space") launchBall();
-      });
-      window.addEventListener("keyup", (e) => (keys[e.code] = false));
-
       function update() {
         if (!gameActive) return;
 
+        // Keep the frame loop alive while paused, but advance nothing.
+        if (Arcade.Shell.paused) {
+          requestAnimationFrame(update);
+          return;
+        }
+
+        if (Arcade.Input.justPressed("fire")) launchBall();
+
         // Move Paddle
-        if (keys["ArrowLeft"] && paddle.x > 0) {
+        if (Arcade.Input.held("left") && paddle.x > 0) {
           paddle.x -= paddle.speed;
         }
-        if (keys["ArrowRight"] && paddle.x + paddle.width < CANVAS_WIDTH) {
+        if (
+          Arcade.Input.held("right") &&
+          paddle.x + paddle.width < CANVAS_WIDTH
+        ) {
           paddle.x += paddle.speed;
         }
 
@@ -473,17 +528,20 @@
           if (ball.x + ball.radius > CANVAS_WIDTH) {
             ball.dx *= -1;
             ball.x = CANVAS_WIDTH - ball.radius;
+            Sound.wall();
           }
           // Left Wall
           else if (ball.x - ball.radius < 0) {
             ball.dx *= -1;
             ball.x = ball.radius;
+            Sound.wall();
           }
 
           // Top Wall
           if (ball.y - ball.radius < 0) {
             ball.dy *= -1;
             ball.y = ball.radius;
+            Sound.wall();
           }
 
           // Paddle Collision
@@ -495,6 +553,7 @@
             ball.x < paddle.x + paddle.width
           ) {
             ball.dy = -Math.abs(ball.dy); // Ensure it always goes up
+            Sound.paddle();
             // Adjust horizontal velocity based on where it hit the paddle
             let hitPoint =
               (ball.x - (paddle.x + HALF_PADDLE_WIDTH)) / HALF_PADDLE_WIDTH;
@@ -516,6 +575,7 @@
                 block.active = false;
                 ball.dy *= -1;
                 score += 20;
+                Sound.brick(block.row);
                 updateUI();
                 createParticles(
                   block.x + block.width / 2,
@@ -534,6 +594,7 @@
 
           // Lose Life (Passes bottom)
           if (ball.y - ball.radius > CANVAS_HEIGHT) {
+            Sound.lost();
             lives--;
             updateUI();
             if (lives <= 0) {
@@ -608,6 +669,9 @@
         }
         ctx.globalAlpha = 1.0;
       }
+
+      Arcade.Shell.init({ game: GAME_KEY });
+      renderScores();
     </script>
   </body>
 </html>

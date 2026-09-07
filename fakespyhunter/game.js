@@ -114,24 +114,7 @@ function generateRocketTexture(scene) {
   g.fillRect(5, 15, 2, 3);
   g.generateTexture('rocket', 12, 18);
 }
-let audioContext = null;
-let audioMasterGain = null;
-
-function initAudioContext() {
-  if (audioContext) return audioContext;
-  const AudioCtx = window.AudioContext || window.webkitAudioContext;
-  if (!AudioCtx) return null;
-  audioContext = new AudioCtx();
-  // create a master gain so we can mute/unmute cleanly
-  try {
-    audioMasterGain = audioContext.createGain();
-    audioMasterGain.gain.setValueAtTime(1, audioContext.currentTime);
-    audioMasterGain.connect(audioContext.destination);
-  } catch (e) {
-    audioMasterGain = null;
-  }
-  return audioContext;
-}
+const GAME_KEY = 'spyhunter';
 
 function noteToFrequency(note) {
   const noteMap = {
@@ -148,97 +131,38 @@ function noteToFrequency(note) {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-function playTone(frequency, duration = 0.12, type = 'square', volume = 0.16, startOffset = 0) {
-  const context = initAudioContext();
-  if (!context) return;
-  const now = context.currentTime + startOffset;
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.type = type;
-  oscillator.frequency.setValueAtTime(frequency, now);
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.linearRampToValueAtTime(volume, now + 0.01);
-  gain.gain.setValueAtTime(volume, now + duration * 0.8);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-  if (audioMasterGain) oscillator.connect(gain).connect(audioMasterGain);
-  else oscillator.connect(gain).connect(context.destination);
-  oscillator.start(now);
-  oscillator.stop(now + duration + 0.02);
-}
+const MUSIC_PATTERN = ['F1', 'F1', 'G1', 'F1', 'G#1', 'F1', 'B1', 'A1'];
 
-function playNoise(duration = 0.12, volume = 0.2) {
-  const context = initAudioContext();
-  if (!context) return;
-  const buffer = context.createBuffer(1, context.sampleRate * duration, context.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < data.length; i += 1) {
-    data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-  }
-  const source = context.createBufferSource();
-  source.buffer = buffer;
-  const gain = context.createGain();
-  const now = context.currentTime;
-  gain.gain.setValueAtTime(volume, now);
-  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-  if (audioMasterGain) source.connect(gain).connect(audioMasterGain);
-  else source.connect(gain).connect(context.destination);
-  source.start(now);
-  source.stop(now + duration + 0.02);
-}
-
-const MUSIC_PATTERN = [
-   { note: 'F1', dur: 0.12 }, { note: 'F1', dur: 0.12 },
-  { note: 'G1', dur: 0.12 }, { note: 'F1', dur: 0.12 },
-  { note: 'G#1', dur: 0.12}, 
-  { note: 'F1', dur: 0.12 }, { note: 'B1', dur: 0.12 },
-  { note: 'A1', dur: 0.12 }, 
-];
-
-function startMusic(scene) {
-  if (scene.musicEvent || !initAudioContext()) return;
-  scene.musicIndex = 0;
-  scene.musicEvent = scene.time.addEvent({
-    delay: 190,
-    loop: true,
-    callback: () => {
-      const part = MUSIC_PATTERN[scene.musicIndex];
-      if (part && part.note) {
-        playTone(noteToFrequency(part.note), part.dur, 'square', 0.14);
-      }
-      scene.musicIndex = (scene.musicIndex + 1) % MUSIC_PATTERN.length;
-    },
-  });
-}
+// The shared module owns the context, the master gain and the loop driver.
+const music = Arcade.Audio.loop({
+  notes: MUSIC_PATTERN.map(noteToFrequency),
+  tempo: 190,
+  type: 'square',
+  volume: 0.14,
+  noteDuration: 0.12,
+});
 
 function startAudio(scene) {
   if (scene.audioStarted) return;
   scene.audioStarted = true;
-  const context = initAudioContext();
-  if (!context) return;
-  if (context.state === 'suspended') {
-    context.resume().then(() => startMusic(scene)).catch(() => startMusic(scene));
-  } else {
-    startMusic(scene);
-  }
+  Arcade.Audio.context();
+  music.start();
 }
 
 function playSfx(key) {
-  const context = initAudioContext();
-  if (!context) return;
-  if (context.state === 'suspended') context.resume();
   switch (key) {
     case 'playerShoot':
-      playTone(1100, 0.08, 'square', 0.22);
+      Arcade.Audio.tone(1100, { duration: 0.08, type: 'square', volume: 0.22 });
       break;
     case 'enemyShoot':
-      playTone(760, 0.09, 'square', 0.18);
+      Arcade.Audio.tone(760, { duration: 0.09, type: 'square', volume: 0.18 });
       break;
     case 'enemyRocket':
-      playTone(520, 0.18, 'triangle', 0.16);
-      playTone(300, 0.18, 'sawtooth', 0.12);
+      Arcade.Audio.tone(520, { duration: 0.18, type: 'triangle', volume: 0.16 });
+      Arcade.Audio.tone(300, { duration: 0.18, type: 'sawtooth', volume: 0.12 });
       break;
     case 'collision':
-      playNoise(0.12, 0.24);
+      Arcade.Audio.noise({ duration: 0.12, volume: 0.24, filterFrom: 2000, filterTo: 400 });
       break;
     default:
       break;
@@ -477,25 +401,12 @@ class GameScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '16px', color: '#ffff88',
     }).setOrigin(0, 0).setDepth(10);
 
-    // Load persistent high scores (top 5) and normalize to {name,score}
-    let hs = [];
-    try {
-      const raw = localStorage.getItem('fakespyhunter_highscores');
-      if (raw) hs = JSON.parse(raw);
-    } catch (e) {
-      hs = [];
-    }
-    this.highScores = Array.isArray(hs) ? hs.map((it) => {
-      if (it == null) return { name: '---', score: 0 };
-      if (typeof it === 'number') return { name: '---', score: it };
-      if (typeof it === 'object' && typeof it.score === 'number') return { name: it.name || '---', score: it.score };
-      return { name: '---', score: 0 };
-    }) : [];
-
     this.updateHUD();
 
     this.started = false;
-    this.startOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75).setDepth(20);
+    this.startOverlay = this.add.rectangle(
+      GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75
+    ).setDepth(20);
     this.startTitle = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40, 'FAKE SPY HUNTER', {
       fontFamily: 'monospace', fontSize: '32px', color: '#ffffff', align: 'center',
     }).setOrigin(0.5).setDepth(21);
@@ -503,16 +414,28 @@ class GameScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '18px', color: '#ffdd55', align: 'center',
     }).setOrigin(0.5).setDepth(21);
 
-    const hsText = (this.highScores && this.highScores.length)
-      ? this.highScores.map((v, i) => `${i + 1}. ${v.name} ${v.score}`).join('\n')
-      : 'No high scores';
-    this.startHighText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 60, hsText, {
-      fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', align: 'center',
-    }).setOrigin(0.5).setDepth(21);
+    this.startHighText = this.add.text(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2 + 60,
+      Arcade.Scores.format(GAME_KEY),
+      { fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', align: 'center' }
+    ).setOrigin(0.5).setDepth(21);
 
     this.input.keyboard.once('keydown-SPACE', () => {
       this.startGame();
     });
+
+    // Phaser drives its own loop, so the shell tells the scene to suspend.
+    Arcade.Shell.init({
+      game: GAME_KEY,
+      back: '../index.html',
+      onPause: () => this.scene.pause(),
+      onResume: () => {
+        this.scene.resume();
+        this.syncMuteButton();
+      },
+    });
+    this.syncMuteButton();
 
     // Award 10 points per second while the game is running
     this.scoreEvent = this.time.addEvent({
@@ -536,19 +459,18 @@ class GameScene extends Phaser.Scene {
     startAudio(this);
   }
 
+  // The button and the shared M key drive the same knob, so the label stays
+  // truthful whichever one was used.
   toggleMute() {
-    this.muted = !this.muted;
-    const ctx = initAudioContext();
-    if (audioMasterGain && ctx) {
-      try {
-        audioMasterGain.gain.setValueAtTime(this.muted ? 0.0001 : 1, ctx.currentTime);
-      } catch (e) {
-        // ignore
-      }
-    }
+    this.muted = Arcade.Audio.toggleMute();
+    this.syncMuteButton();
+  }
+
+  syncMuteButton() {
+    this.muted = Arcade.Audio.isMuted();
     if (this.muteButton) this.muteButton.setText(this.muted ? 'UNMUTE' : 'MUTE');
   }
-  
+
 
   update(time, delta) {
     if (!this.started || this.gameOver) return;
@@ -775,68 +697,28 @@ class GameScene extends Phaser.Scene {
   showGameOver() {
     this.gameOver = true;
     this.player.setVisible(false);
-
-    // Prepare high score list and determine if this is a new top-5
-    const prev = Array.isArray(this.highScores) ? this.highScores.slice() : [];
-    const playerScore = this.score || 0;
-    prev.push({ name: '', score: playerScore });
-    prev.sort((a, b) => b.score - a.score);
-    const newIndex = prev.findIndex(p => p.name === '' && p.score === playerScore);
-    const top = prev.slice(0, 5);
-    this.highScores = top;
+    music.stop();
 
     this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75).setDepth(100);
     this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 'go_title').setDepth(101);
     this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, 'go_hint').setDepth(101);
 
-    if (newIndex !== -1 && newIndex < 5) {
-      // Collect initials for new high score
-      this.collectingInitials = true;
-      this.initials = '';
-      this.initialsText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100, 'ENTER INITIALS: ___', {
-        fontFamily: 'monospace', fontSize: '18px', color: '#ffdd55', align: 'center',
-      }).setOrigin(0.5).setDepth(102);
+    const table = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 90, '', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', align: 'center',
+    }).setOrigin(0.5, 0).setDepth(101);
 
-      const handler = (event) => {
-        if (!this.collectingInitials) return;
-        const key = event.key;
-        if (key === 'Backspace') {
-          this.initials = this.initials.slice(0, -1);
-        } else if (key === 'Enter') {
-          if (this.initials.length === 0) return;
-          // finalize name and save
-          prev[newIndex].name = this.initials.padEnd(3).slice(0, 3);
-          const finalTop = prev.slice(0, 5);
-          this.highScores = finalTop;
-          try { localStorage.setItem('fakespyhunter_highscores', JSON.stringify(finalTop)); } catch (e) { /* ignore */ }
-          if (this.initialsText) this.initialsText.destroy();
-          const hsText = finalTop.length ? finalTop.map((v, i) => `${i + 1}. ${v.name} ${v.score}`).join('\n') : 'No high scores';
-          this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 140, hsText, {
-            fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', align: 'center',
-          }).setOrigin(0.5).setDepth(101);
-          this.input.keyboard.once('keydown-R', () => this.scene.restart());
-          this.input.keyboard.off('keydown', handler);
-          this.collectingInitials = false;
-        } else if (/^[a-zA-Z]$/.test(key) && this.initials.length < 3) {
-          this.initials += key.toUpperCase();
-        }
-        if (this.initialsText) this.initialsText.setText(`ENTER INITIALS: ${this.initials.padEnd(3, '_')}`);
-      };
+    const showTable = () => table.setText(Arcade.Scores.format(GAME_KEY));
 
-      this.input.keyboard.on('keydown', handler);
-    } else {
-      // Not a new high score - save list and show it
-      try { localStorage.setItem('fakespyhunter_highscores', JSON.stringify(top)); } catch (e) { /* ignore */ }
-      const hsText = top.length ? top.map((v, i) => `${i + 1}. ${v.name} ${v.score}`).join('\n') : 'No high scores';
-      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 100, hsText, {
-        fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', align: 'center',
-      }).setOrigin(0.5).setDepth(101);
-      this.input.keyboard.once('keydown-R', () => {
-        this.scene.restart();
+    if (Arcade.Scores.qualifies(GAME_KEY, this.score)) {
+      Arcade.Scores.promptInitials(this.score, (initials) => {
+        Arcade.Scores.submit(GAME_KEY, initials, this.score);
+        showTable();
       });
     }
-  }
+    showTable();
 
+    this.input.keyboard.once('keydown-R', () => this.scene.restart());
+  }
   updateHUD() {
     this.livesText.setText(`LIVES: ${this.playerLives}`);
     const hpBar = '♥'.repeat(this.playerHP) + '♡'.repeat(PLAYER_MAX_HP - this.playerHP);

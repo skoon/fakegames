@@ -55,9 +55,9 @@ window.Phaser = {
       this.add = {
         graphics: () => chainable(),
         sprite: () => makeSprite(),
-        text: () => chainable(),
-        rectangle: () => chainable(),
-        image: () => chainable(),
+        text: () => makeSprite(),
+        rectangle: () => makeSprite(),
+        image: () => makeSprite(),
       };
       this.make = { graphics: () => chainable() };
       this.input = {
@@ -68,7 +68,7 @@ window.Phaser = {
             up: { isDown: false },
             down: { isDown: false },
           }),
-          addKey: () => ({ isDown: false }),
+          addKey: () => chainable({ isDown: false }),
           once: () => {},
           on: () => {},
           off: () => {},
@@ -192,3 +192,29 @@ function stepFrame(timestamp) {
   const pending = frameQueue.splice(0, frameQueue.length);
   for (const fn of pending) fn(timestamp);
 }
+
+/* -------------------------------------- extra Phaser surface for Spy Hunter */
+
+window.Phaser.Math = {
+  Clamp: (v, min, max) => Math.min(max, Math.max(min, v)),
+};
+
+window.Phaser.Geom = {
+  Intersects: {
+    // Spy Hunter's sprites are all stubs with no real bounds, so nothing ever
+    // overlaps. Collision behaviour is not what these suites are checking.
+    RectangleToRectangle: () => false,
+  },
+};
+
+// Scenes ask for a few display objects the base stub does not list.
+const _sceneCtor = window.Phaser.Scene;
+window.Phaser.Scene = class extends _sceneCtor {
+  constructor(config) {
+    super(config);
+    this.add.tileSprite = () => chainable({ tilePositionY: 0 });
+    this.add.group = () => chainable({ getChildren: () => [], add: () => {} });
+    this.scene.pause = () => { this.scene.paused = true; };
+    this.scene.resume = () => { this.scene.paused = false; };
+  }
+};

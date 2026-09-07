@@ -1,0 +1,138 @@
+/**
+ * Arcade shell chrome — back link, pause overlay, initials entry, mute tag.
+ *
+ * Everything here is position: fixed so it can be injected into any game
+ * without disturbing layouts that centre a canvas with flexbox.
+ *
+ * Deliberately single-theme: these sit on top of games that are all dark, so
+ * the palette is fixed rather than following the viewer's preference.
+ */
+
+:root {
+  --arcade-ink: #e8f4f8;
+  --arcade-dim: #7d8f99;
+  --arcade-accent: #00ffff;
+  --arcade-warn: #ff6600;
+  --arcade-ground: rgba(3, 6, 10, 0.92);
+  --arcade-font: "Share Tech Mono", "Courier New", monospace;
+}
+
+.arcade-back,
+.arcade-muted,
+.arcade-pause,
+.arcade-initials {
+  font-family: var(--arcade-font);
+  letter-spacing: 0.08em;
+}
+
+/* ------------------------------------------------------------- back link */
+
+.arcade-back {
+  position: fixed;
+  top: 14px;
+  left: 16px;
+  z-index: 9000;
+  color: var(--arcade-dim);
+  text-decoration: none;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.arcade-back:hover,
+.arcade-back:focus-visible {
+  color: var(--arcade-accent);
+  border-color: var(--arcade-accent);
+  outline: none;
+}
+
+/* --------------------------------------------------------- mute indicator */
+
+.arcade-muted {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 9000;
+  color: var(--arcade-warn);
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid var(--arcade-warn);
+}
+
+/* ---------------------------------------------------------- pause overlay */
+
+.arcade-pause,
+.arcade-initials {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--arcade-ground);
+}
+
+.arcade-pause[hidden],
+.arcade-initials[hidden] {
+  display: none !important;
+}
+
+.arcade-pause-box,
+.arcade-initials-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 48px;
+  border: 2px solid var(--arcade-accent);
+  box-shadow: 0 0 24px rgba(0, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.arcade-pause-box h2,
+.arcade-initials-box h2 {
+  margin: 0;
+  font-size: 28px;
+  color: var(--arcade-accent);
+  letter-spacing: 0.22em;
+}
+
+.arcade-pause-box p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--arcade-dim);
+}
+
+.arcade-pause-box b {
+  color: var(--arcade-ink);
+  font-weight: 400;
+}
+
+/* --------------------------------------------------------- initials entry */
+
+.arcade-initials-score {
+  font-size: 34px;
+  color: var(--arcade-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.arcade-initials-entry {
+  font-size: 46px;
+  letter-spacing: 0.34em;
+  color: var(--arcade-warn);
+  /* letter-spacing pads the right edge; pull it back so it reads as centred */
+  text-indent: 0.34em;
+}
+
+.arcade-initials-hint {
+  font-size: 11px;
+  color: var(--arcade-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arcade-back {
+    transition: none;
+  }
+}
