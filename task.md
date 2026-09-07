@@ -16,7 +16,7 @@ Phase 1 only this session; review before anything structural moves.
 - [x] Phase 2 — Tempest web shapes
 - [x] Phase 3 — Breakout power-ups (ball -> balls[])
 - [x] Phase 4 — Pole Position countdown timer
-- [ ] Phase 5 — Spy Hunter weapons van
+- [x] Phase 5 — Spy Hunter weapons van
 
 ## Decisions taken without asking
 - **Mystery saucer scoring: the authentic shot-count formula**, not the random
@@ -108,3 +108,37 @@ table so no prompt opens.
   them.** I had framed replacing as the authentic option, but on checking, the
   arcade is both: a lap distance to complete and a clock that can end you first.
   So alongside is the more faithful reading, not the compromise.
+
+## Phase 5 done — Spy Hunter weapons van
+
+412 assertions (up from 359). All eight pages boot clean.
+
+The van comes past, settles ahead of you and drops its ramp for nine seconds.
+Drive into the back and you come out armed with one of three: oil slick and
+smoke screen drop out the back, missiles go forward. Shift deploys. Missiles
+punch through more than one car in a shot, which is what makes them different
+from the gun rather than just stronger.
+
+The player is now a small state machine — driving / boarding / driving — with
+the car hidden and the controls dead in the middle. Nothing else in that file
+needed one.
+
+**Deviation from the arcade, forced by the road:** the real van pulls out of a
+side road. Ours is a straight scrolling tile with no side roads, so the van
+arrives from up the road and holds station instead.
+
+Boarding and the weapon hits are deliberately plain arithmetic rather than
+sprite bounds, because the Phaser stub cannot do bounds — that is what made them
+testable at all.
+
+Counterfactuals: stopping the ramp opening gave 3 failures, disabling deployment
+gave 10, making missiles stop at the first car gave 1.
+
+**Caught by looking again:** the oil slick was near-black on near-black tarmac
+and effectively invisible in play. It now has a petrol sheen round the rim. No
+assertion would ever have found that.
+
+## Step 4 complete
+
+All eight signature mechanics landed across five phases. 412 assertions, up from
+156 at the end of step 3.

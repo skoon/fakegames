@@ -26,17 +26,44 @@ function chainable(extra) {
 
 const spriteBook = { live: 0 };
 
-function makeSprite() {
+function makeSprite(extra) {
   spriteBook.live++;
   let destroyed = false;
-  return chainable({
-    destroyed: false,
-    destroy() {
-      if (!destroyed) {
-        destroyed = true;
-        spriteBook.live--;
-      }
-      this.destroyed = true;
+  return chainable(
+    Object.assign(
+      {
+        destroyed: false,
+        // Tracked because suites assert on them: a hidden car, a cleared prompt.
+        visible: true,
+        alpha: 1,
+        destroy() {
+          if (!destroyed) {
+            destroyed = true;
+            spriteBook.live--;
+          }
+          this.destroyed = true;
+        },
+        setVisible(value) {
+          this.visible = value !== false;
+          return this;
+        },
+        setAlpha(value) {
+          this.alpha = value;
+          return this;
+        },
+      },
+      extra
+    )
+  );
+}
+
+/** A text object that remembers what was set on it. */
+function makeText() {
+  return makeSprite({
+    text: "",
+    setText(value) {
+      this.text = value === undefined || value === null ? "" : String(value);
+      return this;
     },
   });
 }
@@ -55,7 +82,7 @@ window.Phaser = {
       this.add = {
         graphics: () => chainable(),
         sprite: () => makeSprite(),
-        text: () => makeSprite(),
+        text: () => makeText(),
         rectangle: () => makeSprite(),
         image: () => makeSprite(),
       };
@@ -213,7 +240,19 @@ window.Phaser.Scene = class extends _sceneCtor {
   constructor(config) {
     super(config);
     this.add.tileSprite = () => chainable({ tilePositionY: 0 });
-    this.add.group = () => chainable({ getChildren: () => [], add: () => {} });
+    // Groups back onto a real array, so suites can put enemies in one and
+    // exercise the collision maths that reads getChildren().
+    this.add.group = () => {
+      const members = [];
+      return {
+        getChildren: () => members,
+        add: (item) => {
+          members.push(item);
+          return item;
+        },
+        clear: () => { members.length = 0; },
+      };
+    };
     this.scene.pause = () => { this.scene.paused = true; };
     this.scene.resume = () => { this.scene.paused = false; };
   }

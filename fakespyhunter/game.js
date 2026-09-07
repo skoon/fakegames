@@ -30,6 +30,45 @@ const PLAYER_LIVES = 3;
 const INVULN_TIME = 2000;
 const RESPAWN_TIME = 3000;
 
+/* ------------------------------------------------------------ weapons van ---
+ *
+ * The truck that makes this Spy Hunter. In the arcade it pulls out of a side
+ * road; our road is a straight scrolling tile with no side roads, so instead it
+ * comes past from behind, settles ahead of you and drops its rear ramp. Drive
+ * up into the back of it and you come out armed.
+ *
+ * The player is a small state machine while this happens, which nothing else in
+ * this game needs: driving -> boarding -> driving, with the car hidden and the
+ * controls dead in the middle state.
+ */
+const VAN = {
+  w: 54,
+  h: 108,
+  firstAt: 12000, // ms before the first one turns up
+  interval: 26000, // ms between the rest
+  arriveSpeed: 90, // px/s while it settles into position
+  leaveSpeed: 260, // px/s once it has been used or timed out
+  holdY: GAME_HEIGHT * 0.32, // where it waits for you
+  openFor: 9000, // ms the ramp stays down
+  entryW: 40, // how accurately you have to line up with the ramp
+  entryH: 26,
+};
+
+const BOARDING_TIME = 900; // ms inside the van
+
+// Ammo comes in threes and fives because the rear weapons are the strong ones.
+const WEAPONS = {
+  oil: { name: 'OIL SLICK', ammo: 3, rear: true },
+  smoke: { name: 'SMOKE SCREEN', ammo: 3, rear: true },
+  missile: { name: 'MISSILES', ammo: 5, rear: false },
+};
+const WEAPON_KEYS = Object.keys(WEAPONS);
+
+const HAZARD_LIFE = 6000; // ms an oil slick or smoke cloud lasts
+const HAZARD_RADIUS = 26;
+const MISSILE_SPEED = 720;
+const MISSILE_RADIUS = 22;
+
 function generateRoadTexture(scene) {
   const g = scene.make.graphics({ add: false });
   const { left, right, width, shoulder } = ROAD;
@@ -161,6 +200,24 @@ function playSfx(key) {
       Arcade.Audio.tone(520, { duration: 0.18, type: 'triangle', volume: 0.16 });
       Arcade.Audio.tone(300, { duration: 0.18, type: 'sawtooth', volume: 0.12 });
       break;
+    case 'vanHorn':
+      Arcade.Audio.tone(210, { duration: 0.3, type: 'square', volume: 0.16 });
+      Arcade.Audio.tone(158, { duration: 0.3, type: 'square', volume: 0.16 });
+      break;
+    case 'board':
+      [440, 660, 880].forEach((f, i) =>
+        Arcade.Audio.tone(f, { duration: 0.12, delay: i * 0.1, type: 'square', volume: 0.2 })
+      );
+      break;
+    case 'oilDrop':
+      Arcade.Audio.noise({ duration: 0.25, volume: 0.18, filterFrom: 700, filterTo: 120 });
+      break;
+    case 'smokeDrop':
+      Arcade.Audio.noise({ duration: 0.45, volume: 0.2, filterFrom: 1800, filterTo: 300 });
+      break;
+    case 'missile':
+      Arcade.Audio.tone(300, { slideTo: 1500, duration: 0.3, type: 'sawtooth', volume: 0.2 });
+      break;
     case 'collision':
       Arcade.Audio.noise({ duration: 0.12, volume: 0.24, filterFrom: 2000, filterTo: 400 });
       break;
@@ -229,6 +286,99 @@ function generateEnemyTexture(scene) {
   g.fillRect(w - 8, 26, 4, 4);
 
   g.generateTexture('enemy', w + 8, h + 8);
+}
+
+function generateVanTextures(scene) {
+  const w = VAN.w;
+  const h = VAN.h;
+
+  // Closed: a plain white box truck.
+  let g = scene.make.graphics({ add: false });
+  g.fillStyle(0x000000, 0.35);
+  g.fillRect(4, 4, w, h);
+  g.fillStyle(0xdddddd);
+  g.fillRect(0, 0, w, h);
+  g.fillStyle(0xf4f4f4);
+  g.fillRect(3, 3, w - 6, h - 20);
+  g.fillStyle(0x2a2a2a);
+  g.fillRect(6, 4, w - 12, 14); // cab roof
+  g.fillStyle(0x1a1a1a);
+  g.fillRect(0, 18, 6, 20);
+  g.fillRect(w - 6, 18, 6, 20);
+  g.fillRect(0, h - 40, 6, 22);
+  g.fillRect(w - 6, h - 40, 6, 22);
+  g.fillStyle(0x888888);
+  g.fillRect(8, h - 16, w - 16, 14); // shut rear door
+  g.fillStyle(0xff3333);
+  g.fillRect(6, h - 4, 8, 4);
+  g.fillRect(w - 14, h - 4, 8, 4);
+  g.generateTexture('van', w + 4, h + 4);
+  g.destroy();
+
+  // Open: rear door up, ramp down, lit inside.
+  g = scene.make.graphics({ add: false });
+  g.fillStyle(0x000000, 0.35);
+  g.fillRect(4, 4, w, h);
+  g.fillStyle(0xdddddd);
+  g.fillRect(0, 0, w, h - 14);
+  g.fillStyle(0xf4f4f4);
+  g.fillRect(3, 3, w - 6, h - 34);
+  g.fillStyle(0x2a2a2a);
+  g.fillRect(6, 4, w - 12, 14);
+  g.fillStyle(0x1a1a1a);
+  g.fillRect(0, 18, 6, 20);
+  g.fillRect(w - 6, 18, 6, 20);
+  // The lit interior you are aiming for.
+  g.fillStyle(0xffcc33);
+  g.fillRect(10, h - 30, w - 20, 16);
+  g.fillStyle(0xffee99);
+  g.fillRect(14, h - 26, w - 28, 10);
+  // Ramp
+  g.fillStyle(0xaaaaaa);
+  g.fillRect(12, h - 14, w - 24, 14);
+  g.generateTexture('vanOpen', w + 4, h + 4);
+  g.destroy();
+
+  // Oil slick. Near-black on near-black tarmac is invisible, so it gets a
+  // petrol sheen around the rim to make it read on the road.
+  g = scene.make.graphics({ add: false });
+  g.fillStyle(0x6f5fa8, 0.85);
+  g.fillEllipse(26, 18, 50, 31);
+  g.fillStyle(0x0d0d14, 0.95);
+  g.fillEllipse(26, 18, 44, 25);
+  g.fillStyle(0x3fa9c8, 0.75);
+  g.fillEllipse(19, 14, 18, 10);
+  g.fillStyle(0xa060c0, 0.6);
+  g.fillEllipse(33, 22, 14, 8);
+  g.fillStyle(0xd8d8ee, 0.5);
+  g.fillEllipse(22, 12, 7, 4);
+  g.generateTexture('oil', 52, 36);
+  g.destroy();
+
+  // Smoke cloud
+  g = scene.make.graphics({ add: false });
+  g.fillStyle(0xb8b8c0, 0.75);
+  g.fillCircle(18, 22, 15);
+  g.fillCircle(34, 18, 17);
+  g.fillCircle(28, 32, 13);
+  g.fillStyle(0xe4e4ec, 0.6);
+  g.fillCircle(24, 20, 10);
+  g.generateTexture('smoke', 54, 48);
+  g.destroy();
+
+  // Missile
+  g = scene.make.graphics({ add: false });
+  g.fillStyle(0xdddddd);
+  g.fillRect(3, 2, 6, 18);
+  g.fillStyle(0xff4422);
+  g.fillTriangle(3, 3, 9, 3, 6, 0);
+  g.fillStyle(0x666666);
+  g.fillRect(0, 12, 3, 7);
+  g.fillRect(9, 12, 3, 7);
+  g.fillStyle(0xffcc44);
+  g.fillRect(4, 20, 4, 5);
+  g.generateTexture('missile', 12, 26);
+  g.destroy();
 }
 
 function generateExplosionTexture(scene) {
@@ -343,6 +493,7 @@ class GameScene extends Phaser.Scene {
     generateExplosionTexture(this);
     generateEnemyBulletTexture(this);
     generateRocketTexture(this);
+    generateVanTextures(this);
     makeTextTexture(this, 'go_title', 'GAME OVER', 36, '#ff3333');
     makeTextTexture(this, 'go_hint', 'Press R to restart', 16, '#ffffff');
 
@@ -383,6 +534,16 @@ class GameScene extends Phaser.Scene {
     this.carX = GAME_WIDTH / 2;
     this.carY = GAME_HEIGHT / 2;
 
+    // Van, weapons and the player state machine.
+    this.playerState = 'driving';
+    this.boardTimer = 0;
+    this.van = null;
+    this.nextVan = VAN.firstAt;
+    this.weapon = null;
+    this.weaponAmmo = 0;
+    this.hazards = [];
+    this.missiles = [];
+
     this.playerHP = PLAYER_MAX_HP;
     this.playerLives = PLAYER_LIVES;
     this.invulnerable = false;
@@ -397,6 +558,14 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(1, 0).setDepth(10);
 
     this.score = 0;
+    this.weaponText = this.add.text(10, GAME_HEIGHT - 26, '', {
+      fontFamily: 'monospace', fontSize: '15px', color: '#ffcc44',
+    }).setOrigin(0, 0).setDepth(10);
+
+    this.vanHint = this.add.text(GAME_WIDTH / 2, 74, '', {
+      fontFamily: 'monospace', fontSize: '14px', color: '#ffee99', align: 'center',
+    }).setOrigin(0.5).setDepth(10);
+
     this.scoreText = this.add.text(10, 10, 'SCORE: 0', {
       fontFamily: 'monospace', fontSize: '16px', color: '#ffff88',
     }).setOrigin(0, 0).setDepth(10);
@@ -485,6 +654,21 @@ class GameScene extends Phaser.Scene {
     if (this.invulnerable) {
       this.player.setAlpha(Math.sin(time * 0.015) > 0 ? 1 : 0.2);
     }
+
+    this.updateVan(dt);
+    this.updateHazards(dt);
+    this.updateMissiles(dt);
+
+    // Inside the van the car is gone and the controls are dead.
+    if (this.playerState === 'boarding') {
+      this.road.tilePositionY -= ROAD_SPEED * dt;
+      this.boardTimer -= delta;
+      if (this.boardTimer <= 0) this.finishBoarding();
+      return;
+    }
+
+    // Shift deploys whatever you came out of the van with.
+    if (Arcade.Input.justPressed('fire2')) this.deployWeapon();
 
     if (this.cursors.up.isDown || this.wasd.W.isDown) {
       this.carY -= CAR.moveSpeed * dt;
@@ -618,6 +802,217 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  /* ------------------------------------------------------------ the van --- */
+
+  spawnVan() {
+    if (this.van) return;
+
+    this.van = {
+      x: ROAD.left + ROAD.width / 2,
+      y: -VAN.h,
+      state: 'arriving',
+      openTimer: VAN.openFor,
+      sprite: this.add.sprite(0, 0, 'van').setOrigin(0.5, 0.5).setDepth(3),
+    };
+    playSfx('vanHorn');
+  }
+
+  /** Where the ramp is: the bottom edge of the van. */
+  vanRearY() {
+    return this.van ? this.van.y + VAN.h / 2 : 0;
+  }
+
+  updateVan(dt) {
+    if (!this.van) {
+      this.nextVan -= dt * 1000;
+      if (this.nextVan <= 0) {
+        this.spawnVan();
+        this.nextVan = VAN.interval;
+      }
+      return;
+    }
+
+    const van = this.van;
+
+    if (van.state === 'arriving') {
+      van.y += VAN.arriveSpeed * dt;
+      if (van.y >= VAN.holdY) {
+        van.y = VAN.holdY;
+        van.state = 'open';
+      }
+    } else if (van.state === 'open') {
+      // It holds station, so it reads as matching your speed.
+      van.openTimer -= dt * 1000;
+      if (van.openTimer <= 0) van.state = 'leaving';
+    } else {
+      // Pulls away up the road and is gone.
+      van.y -= VAN.leaveSpeed * dt;
+      if (van.y < -VAN.h) {
+        van.sprite.destroy();
+        this.van = null;
+        this.vanHint.setText('');
+        return;
+      }
+    }
+
+    van.sprite.setTexture(van.state === 'open' ? 'vanOpen' : 'van');
+    van.sprite.setPosition(van.x, van.y);
+
+    this.vanHint.setText(
+      van.state === 'open' ? 'DRIVE INTO THE VAN' : ''
+    );
+
+    if (van.state === 'open' && this.playerState === 'driving') {
+      this.checkBoarding();
+    }
+  }
+
+  /** Plain arithmetic rather than sprite bounds, so the zone is testable. */
+  checkBoarding() {
+    const van = this.van;
+    const dx = Math.abs(this.carX - van.x);
+    const dy = Math.abs(this.carY - this.vanRearY());
+
+    if (dx <= VAN.entryW / 2 && dy <= VAN.entryH / 2) this.boardVan();
+  }
+
+  boardVan() {
+    this.playerState = 'boarding';
+    this.boardTimer = BOARDING_TIME;
+    this.player.setVisible(false);
+    this.vanHint.setText('');
+    playSfx('board');
+
+    if (this.van) this.van.state = 'leaving';
+  }
+
+  /** Comes out of the van armed with something. */
+  finishBoarding() {
+    this.playerState = 'driving';
+    this.player.setVisible(true);
+
+    const kind = WEAPON_KEYS[Math.floor(Math.random() * WEAPON_KEYS.length)];
+    this.giveWeapon(kind);
+
+    this.carY = Math.min(GAME_HEIGHT - 80, this.carY + 40);
+    this.invulnerable = true;
+    this.invulnUntil = this.time.now + INVULN_TIME;
+  }
+
+  giveWeapon(kind) {
+    this.weapon = kind;
+    this.weaponAmmo = WEAPONS[kind].ammo;
+    this.updateHUD();
+  }
+
+  /* -------------------------------------------------------- the weapons --- */
+
+  deployWeapon() {
+    if (!this.weapon || this.weaponAmmo <= 0) return false;
+
+    const spec = WEAPONS[this.weapon];
+
+    if (spec.rear) {
+      // Dropped out the back, where the traffic behind you will find it.
+      this.hazards.push({
+        x: this.carX,
+        y: this.carY + CAR.h / 2 + 10,
+        kind: this.weapon,
+        life: HAZARD_LIFE,
+        sprite: this.add
+          .sprite(this.carX, this.carY + CAR.h / 2 + 10, this.weapon === 'oil' ? 'oil' : 'smoke')
+          .setOrigin(0.5, 0.5)
+          .setDepth(2),
+      });
+      playSfx(this.weapon === 'oil' ? 'oilDrop' : 'smokeDrop');
+    } else {
+      // Missiles go forward and keep going through whatever they hit.
+      this.missiles.push({
+        x: this.carX,
+        y: this.carY - CAR.h / 2 - 10,
+        sprite: this.add
+          .sprite(this.carX, this.carY - CAR.h / 2 - 10, 'missile')
+          .setOrigin(0.5, 0.5)
+          .setDepth(5),
+      });
+      playSfx('missile');
+    }
+
+    this.weaponAmmo--;
+    if (this.weaponAmmo <= 0) this.weapon = null;
+    this.updateHUD();
+    return true;
+  }
+
+  updateHazards(dt) {
+    for (let i = this.hazards.length - 1; i >= 0; i--) {
+      const hazard = this.hazards[i];
+
+      // Hazards sit on the road, so they scroll away with it.
+      hazard.y += ROAD_SPEED * dt;
+      hazard.life -= dt * 1000;
+      hazard.sprite.setPosition(hazard.x, hazard.y);
+
+      if (hazard.life <= 0 || hazard.y > GAME_HEIGHT + 60) {
+        hazard.sprite.destroy();
+        this.hazards.splice(i, 1);
+        continue;
+      }
+
+      // Anything that drives through it goes off the road.
+      const enemies = this.enemies.getChildren();
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (!enemy.active) continue;
+        if (Math.hypot(enemy.x - hazard.x, enemy.y - hazard.y) > HAZARD_RADIUS) continue;
+
+        this.score += 150;
+        this.explodeAt(enemy.x, enemy.y);
+        enemy.destroy();
+        playSfx('collision');
+      }
+
+      // Smoke also eats whatever is being shot at you.
+      if (hazard.kind === 'smoke') {
+        const shots = this.enemyBullets.getChildren();
+        for (let j = shots.length - 1; j >= 0; j--) {
+          const shot = shots[j];
+          if (!shot.active) continue;
+          if (Math.hypot(shot.x - hazard.x, shot.y - hazard.y) <= HAZARD_RADIUS) {
+            shot.destroy();
+          }
+        }
+      }
+    }
+    this.updateHUD();
+  }
+
+  updateMissiles(dt) {
+    for (let i = this.missiles.length - 1; i >= 0; i--) {
+      const missile = this.missiles[i];
+      missile.y -= MISSILE_SPEED * dt;
+      missile.sprite.setPosition(missile.x, missile.y);
+
+      if (missile.y < -30) {
+        missile.sprite.destroy();
+        this.missiles.splice(i, 1);
+        continue;
+      }
+
+      // A missile does not stop at the first car - that is the point of it.
+      const enemies = this.enemies.getChildren();
+      for (let j = enemies.length - 1; j >= 0; j--) {
+        const enemy = enemies[j];
+        if (!enemy.active) continue;
+        if (Math.hypot(enemy.x - missile.x, enemy.y - missile.y) > MISSILE_RADIUS) continue;
+
+        this.score += 200;
+        this.explodeAt(enemy.x, enemy.y);
+        enemy.destroy();
+      }
+    }
+  }
+
   spawnEnemy() {
     const fromTop = Math.random() > 0.5;
     const x = ROAD.left + CAR.margin + Math.random() * (ROAD.width - CAR.margin * 2);
@@ -724,6 +1119,11 @@ class GameScene extends Phaser.Scene {
     const hpBar = '♥'.repeat(this.playerHP) + '♡'.repeat(PLAYER_MAX_HP - this.playerHP);
     this.hpText.setText(hpBar);
     if (this.scoreText) this.scoreText.setText(`SCORE: ${this.score || 0}`);
+    if (this.weaponText) {
+      this.weaponText.setText(
+        this.weapon ? `${WEAPONS[this.weapon].name} x${this.weaponAmmo}  [SHIFT]` : ''
+      );
+    }
   }
 
   explodeAt(x, y) {
