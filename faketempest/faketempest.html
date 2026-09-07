@@ -493,8 +493,13 @@
         oscillator.stop(ctx.currentTime + duration);
       }
 
+      // Speeds below were tuned against 60Hz frames, so scale them by how long
+      // this frame actually took rather than assuming one.
+      const FRAME_MS = 1000 / 60;
+
       function update(deltaTime) {
         const now = Date.now();
+        const frameScale = deltaTime / FRAME_MS;
 
         // Player movement
         if (keys.left && now - lastMoveTime > moveRate) {
@@ -514,7 +519,7 @@
 
         // Update bullets
         for (let i = bullets.length - 1; i >= 0; i--) {
-          bullets[i].depth += bullets[i].speed;
+          bullets[i].depth += bullets[i].speed * frameScale;
 
           if (bullets[i].depth >= 1) {
             bullets.splice(i, 1);
@@ -660,11 +665,12 @@
         // Update particles
         for (let i = particles.length - 1; i >= 0; i--) {
           const p = particles[i];
-          p.x += p.vx;
-          p.y += p.vy;
-          p.life -= 0.02;
-          p.vx *= 0.98;
-          p.vy *= 0.98;
+          const damping = Math.pow(0.98, frameScale);
+          p.x += p.vx * frameScale;
+          p.y += p.vy * frameScale;
+          p.life -= 0.02 * frameScale;
+          p.vx *= damping;
+          p.vy *= damping;
 
           if (p.life <= 0) {
             particles.splice(i, 1);
@@ -705,9 +711,19 @@
         drawParticles();
       }
 
+      // Pace off the wall clock. A hardcoded delta made everything run at
+      // whatever rate the display happened to refresh at; the clamp keeps a
+      // backgrounded tab from teleporting enemies into the rim on return.
+      const MAX_FRAME_MS = 50;
+      let lastFrameTime = 0;
+
       function gameLoop(timestamp) {
+        const deltaTime = lastFrameTime
+          ? Math.min(MAX_FRAME_MS, timestamp - lastFrameTime)
+          : FRAME_MS;
+        lastFrameTime = timestamp;
+
         if (gameState === "playing") {
-          const deltaTime = 16; // Approximate frame time
           update(deltaTime);
           render();
         }
@@ -728,6 +744,7 @@
         enemySpawnRate = 2000;
         enemiesKilledThisLevel = 0;
         enemiesPerLevel = 10;
+        lastFrameTime = 0;
 
         scoreDisplay.textContent = score;
         levelDisplay.textContent = level;

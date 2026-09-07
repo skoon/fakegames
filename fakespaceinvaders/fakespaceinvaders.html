@@ -493,6 +493,7 @@
               width: ALIEN_WIDTH,
               height: ALIEN_HEIGHT,
               row: row,
+              col: col,
               alive: true,
               points: pointsPerRow[ALIEN_ROWS - 1 - row], // Top row = 30pts, bottom = 5pts
               spriteIndex: ALIEN_ROWS - 1 - row, // Top row uses last sprite
@@ -819,9 +820,9 @@
             // Find bottom-most alien in each column
             const bottomAliens = [];
             for (let col = 0; col < ALIEN_COLS; col++) {
-              const columnAliens = aliveAliens.filter(
-                (a, i) => i % ALIEN_COLS === col
-              );
+              // Group by the alien's own column, not by its index in the
+              // filtered list - that shifts every time one dies.
+              const columnAliens = aliveAliens.filter((a) => a.col === col);
               if (columnAliens.length > 0) {
                 const bottomAlien = columnAliens.reduce((prev, curr) =>
                   curr.y > prev.y ? curr : prev

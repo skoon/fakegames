@@ -16,6 +16,12 @@ const PUMP_DURATION = 300;
 const STUN_DURATION = 1000;
 const PUMPS_TO_KILL = 4;
 
+// Points per kill, keyed by what did the killing. Crushing is worth more.
+const ENEMY_SCORE = {
+    pump: { pooka: 500, fygar: 1000 },
+    rock: { pooka: 1000, fygar: 2000 },
+};
+
 const DIRT_COLOR = 0x8B6914;
 const DIRT_SPECK = 0x7A5E12;
 const WALL_COLOR = 0x444444;
@@ -430,10 +436,10 @@ class DigDugScene extends Phaser.Scene {
         }
     }
 
-    killEnemy(e) {
+    killEnemy(e, cause = 'pump') {
         const idx = this.enemies.indexOf(e);
         if (idx === -1) return;
-        this.score += e.type === 'pooka' ? 500 : 1000;
+        this.score += ENEMY_SCORE[cause][e.type];
         this.enemySprs[idx].destroy();
         // Both arrays are indexed in lockstep by updateEnemies, so they splice together.
         this.enemySprs.splice(idx, 1);
@@ -736,8 +742,7 @@ class DigDugScene extends Phaser.Scene {
                 const e = this.enemies[i];
                 for (const [rr, rc] of rock.tiles) {
                     if (rr === e.gridY && rc === e.gridX) {
-                        this.score += e.type === 'pooka' ? 1000 : 2000;
-                        this.killEnemy(e);
+                        this.killEnemy(e, 'rock');
                         break;
                     }
                 }

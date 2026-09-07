@@ -251,6 +251,52 @@
         font-size: 12px;
       }
 
+      .results {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+        padding: 32px 48px;
+        background: rgba(0, 0, 0, 0.85);
+        border: 3px solid var(--neon-orange);
+        box-shadow: 0 0 30px var(--neon-orange);
+        z-index: 25;
+        pointer-events: auto;
+      }
+
+      .results h2 {
+        margin: 0;
+        font-size: 32px;
+        color: var(--neon-orange);
+        letter-spacing: 4px;
+      }
+
+      .result-rows {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 18px;
+        color: #fff;
+        line-height: 1.8;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .result-best {
+        font-size: 16px;
+        color: var(--neon-green);
+        letter-spacing: 2px;
+      }
+
+      .result-restart {
+        font-size: 14px;
+        color: #fff;
+        animation: blink 1s infinite;
+        letter-spacing: 2px;
+      }
+
       .back-link {
         position: absolute;
         top: 20px;
@@ -284,6 +330,7 @@
         <div class="center-message" id="message">CRASH!</div>
         <div class="countdown" id="countdown"></div>
         <div class="hud-speed"><span id="speedVal">0</span> km/h</div>
+        <div class="results" id="results"></div>
       </div>
 
       <div class="start-screen" id="startScreen">
@@ -353,6 +400,7 @@
       let gameTime = 0;
       let isCrashed = false;
       let crashTimer = 0;
+      let raceFinished = false;
 
       // Countdown state
       let countdownActive = false;
@@ -440,6 +488,10 @@
 
         // Event Listeners
         document.addEventListener("keydown", function (e) {
+          if (raceFinished && (e.key === "r" || e.key === "R")) {
+            startGame();
+            return;
+          }
           switch (e.key) {
             case "ArrowLeft":
               keyLeft = true;
@@ -556,6 +608,10 @@
         document.getElementById("startScreen").style.display = "none";
         gameRunning = true;
         raceStarted = false;
+        raceFinished = false;
+        Sound.stopEngine();
+        document.getElementById("results").style.display = "none";
+        document.getElementById("message").style.display = "none";
         countdownActive = true;
         countdownValue = 3;
         countdownTimer = 1;
@@ -570,6 +626,31 @@
         document.getElementById("countdown").style.display = "block";
         document.getElementById("countdown").innerText = "3";
         Sound.playBeep(440); // First beep
+      }
+
+      // The track keeps rendering behind the results panel, so the race ends by
+      // freezing the sim rather than by tearing the world down.
+      function finishRace() {
+        raceFinished = true;
+        speed = 0;
+        Sound.stopEngine();
+
+        const rows = playerLapTimes
+          .map((t, i) => "LAP " + (i + 1) + "&nbsp;&nbsp;" + t.toFixed(2))
+          .join("<br />");
+        const best = playerBestLap === null ? "--" : playerBestLap.toFixed(2);
+
+        const results = document.getElementById("results");
+        results.innerHTML =
+          "<h2>FINISH</h2>" +
+          '<div class="result-rows">' +
+          rows +
+          "</div>" +
+          '<div class="result-best">BEST LAP ' +
+          best +
+          "</div>" +
+          '<div class="result-restart">PRESS R TO RACE AGAIN</div>';
+        results.style.display = "flex";
       }
 
       function crash(car) {
@@ -587,7 +668,7 @@
       }
 
       function update(dt) {
-        if (!gameRunning) return;
+        if (!gameRunning || raceFinished) return;
 
         // Handle countdown
         if (countdownActive) {
@@ -626,6 +707,7 @@
             isCrashed = false;
             document.getElementById("message").style.display = "none";
             speed = 2000;
+            Sound.startEngine();
           }
         }
 
@@ -692,10 +774,7 @@
 
             playerLap++;
             if (playerLap > TOTAL_LAPS) {
-              // Race finished!
-              document.getElementById("message").style.display = "block";
-              document.getElementById("message").innerText = "FINISH!";
-              gameRunning = false;
+              finishRace();
             } else {
               // Show lap complete message briefly
               document.getElementById("countdown").style.display = "block";
@@ -1104,6 +1183,7 @@
 
         startEngine: function () {
           if (!this.ctx) this.init();
+          if (this.engineOsc) return; // already idling
           this.engineOsc = this.ctx.createOscillator();
           this.engineOsc.type = "sawtooth";
           this.engineGain = this.ctx.createGain();
@@ -1118,6 +1198,18 @@
           filter.connect(this.engineGain);
           this.engineGain.connect(this.ctx.destination);
           this.engineOsc.start();
+        },
+
+        stopEngine: function () {
+          if (this.engineOsc) {
+            this.engineOsc.stop();
+            this.engineOsc.disconnect();
+            this.engineOsc = null;
+          }
+          if (this.engineGain) {
+            this.engineGain.disconnect();
+            this.engineGain = null;
+          }
         },
 
         updateEngine: function (speedPercent) {
@@ -1184,7 +1276,7 @@
       const originalUpdate = update;
       update = function (dt) {
         originalUpdate(dt);
-        if (gameRunning && raceStarted && !isCrashed) {
+        if (gameRunning && raceStarted && !isCrashed && !raceFinished) {
           Sound.updateEngine(speed / maxSpeed);
         }
       };
@@ -1195,6 +1287,7 @@
         if (!isCrashed) {
           // Only play if not already crashed
           Sound.playCrash();
+          Sound.stopEngine(); // update() restarts it when the wreck clears
         }
         originalCrash(car);
       };
