@@ -201,6 +201,83 @@
         --card-color: #ff4444;
       }
 
+      .card-score {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 0.95rem;
+        color: var(--card-color);
+        margin-bottom: 14px;
+        letter-spacing: 1px;
+        font-variant-numeric: tabular-nums;
+        min-height: 1.2em;
+      }
+
+      .card-score .empty {
+        color: #555;
+      }
+
+      /* ------------------------------------------------------ hall of fame */
+
+      .hall {
+        margin: 70px auto 40px;
+        max-width: 640px;
+        width: 100%;
+        padding: 0 20px;
+        z-index: 2;
+      }
+
+      .hall h2 {
+        font-size: 1.3rem;
+        color: var(--neon-blue);
+        text-align: center;
+        letter-spacing: 4px;
+        text-shadow: 0 0 10px var(--neon-blue);
+        margin-bottom: 28px;
+      }
+
+      .hall-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .hall-row {
+        display: grid;
+        grid-template-columns: 2.5rem 1fr 4rem 6rem;
+        gap: 12px;
+        align-items: baseline;
+        padding: 10px 14px;
+        font-family: "Share Tech Mono", monospace;
+        font-size: 1rem;
+        border-bottom: 1px solid #1e1e1e;
+      }
+
+      .hall-rank {
+        color: var(--neon-purple);
+      }
+      .hall-game {
+        color: #ddd;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .hall-name {
+        color: var(--neon-pink);
+        letter-spacing: 2px;
+      }
+      .hall-score {
+        color: var(--neon-green);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .hall-row.unplayed .hall-game,
+      .hall-row.unplayed .hall-rank {
+        color: #444;
+      }
+      .hall-row.unplayed .hall-name,
+      .hall-row.unplayed .hall-score {
+        color: #333;
+      }
+
       footer {
         margin-top: auto;
         margin-bottom: 20px;
@@ -283,36 +360,45 @@
         href="fakespaceinvaders/fakespaceinvaders.html"
         style="text-decoration: none"
       >
-        <div class="game-card invaders">
+        <div class="game-card invaders" data-game="spaceinvaders">
           <div class="game-icon">👾</div>
           <div class="game-title">Fake Space Invaders</div>
           <div class="game-blurb">
-            Defend Earth from the pixelated horde. Classic fixed-shooter action.
-          </div>
+            Six rows, three bunkers, and a mystery saucer worth 300 if you have
+            been counting your shots. The bassline quickens as they close in.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
 
       <!-- Breakout -->
       <a href="fakebreakout/fakebreakout.html" style="text-decoration: none">
-        <div class="game-card breakout">
+        <div class="game-card breakout" data-game="breakout">
           <div class="game-icon">🧱</div>
           <div class="game-title">Fake Breakout</div>
           <div class="game-blurb">
-            Smash the bricks, grab power-ups, and don't drop the ball!
-          </div>
+            Smash the bricks and catch what falls: wide paddle, multiball,
+            lasers, sticky catch, slow-mo. Do not drop the last ball.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
 
       <!-- Asteroids -->
-      <a href="fakeasteroids/faskeasteroids.html" style="text-decoration: none">
-        <div class="game-card asteroids">
+      <a href="fakeasteroids/fakeasteroids.html" style="text-decoration: none">
+        <div class="game-card asteroids" data-game="asteroids">
           <div class="game-icon">☄️</div>
           <div class="game-title">Fake Asteroids</div>
           <div class="game-blurb">
-            Navigate the asteroid belt. Vector graphics goodness. Blast 'em all!
-          </div>
+            Vector rocks that collide with each other. Two saucers hunt you and
+            shoot back - hyperspace out when the screen closes in.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
@@ -322,61 +408,122 @@
         href="fakepoleposition/fakepoleposition.html"
         style="text-decoration: none"
       >
-        <div class="game-card poleposition">
+        <div class="game-card poleposition" data-game="poleposition">
           <div class="game-icon">🏎️</div>
           <div class="game-title">Fake Pole Position</div>
           <div class="game-blurb">
-            Race at breakneck speeds! Dodge opponents and cross the finish line
-            first.
-          </div>
+            Ninety seconds on the clock. Get round the lap to buy thirty more,
+            and finish all three before it runs out.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
 
       <!-- Tempest -->
       <a href="faketempest/faketempest.html" style="text-decoration: none">
-        <div class="game-card tempest">
+        <div class="game-card tempest" data-game="tempest">
           <div class="game-icon">🌀</div>
           <div class="game-title">Fake Tempest</div>
           <div class="game-blurb">
-            Defend the tube from alien invaders. Classic vector shooter action!
-          </div>
+            Seven webs - four closed, three open. On an open one you can be
+            cornered at the end. Two superzaps a level, so spend them well.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
 
       <!-- DigDug -->
       <a href="fakedigdug/index.html" style="text-decoration: none">
-        <div class="game-card digdug">
+        <div class="game-card digdug" data-game="digdug">
           <div class="game-icon">⛏️</div>
           <div class="game-title">Fake DigDug</div>
           <div class="game-blurb">
-            Dig deep, inflate your enemies, and drop heavy rocks. Underground arcade action!
-          </div>
+            Pump them until they pop, or lure two under the same rock for far
+            more. A vegetable appears once you have dropped two.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
       <!-- Spy Hunter -->
       <a href="fakespyhunter/index.html" style="text-decoration: none">
-        <div class="game-card spyhunter">
+        <div class="game-card spyhunter" data-game="spyhunter">
           <div class="game-icon">🚗</div>
           <div class="game-title">Fake Spy Hunter</div>
           <div class="game-blurb">
-            Race your spy car down the highway. Blast enemy vehicles and survive the road!
-          </div>
+            Drive into the weapons van for oil slicks, smoke screens and
+            missiles that punch through more than one car.
+                    </div>
+          <div class="card-score"></div>
+
           <div class="play-btn">Insert Coin</div>
         </div>
       </a>
     </div>
 
+    <section class="hall">
+      <h2>Hall of Fame</h2>
+      <div class="hall-rows" id="hallRows"></div>
+    </section>
+
     <footer>© 2025 Antigravity Arcade Systems</footer>
 
+    <script src="arcade/scores.js"></script>
     <script>
       // Little script to add some CRT flicker randomness
       setInterval(() => {
         const overlay = document.querySelector(".crt-overlay");
         overlay.style.opacity = 0.85 + Math.random() * 0.15;
       }, 100);
+
+      /**
+       * The cabinets save their scores under `arcade:scores:<game>`, and
+       * localStorage is shared across file:// directories, so the front door
+       * can read what the games wrote without a server.
+       */
+      function paintScores() {
+        const cards = [...document.querySelectorAll(".game-card[data-game]")];
+
+        const rows = cards.map((card) => {
+          const key = card.dataset.game;
+          const best = Arcade.Scores.top(key)[0] || null;
+          const title = card.querySelector(".game-title").textContent.trim();
+
+          const slot = card.querySelector(".card-score");
+          slot.innerHTML = best
+            ? "BEST " + best.name + " " + best.score
+            : '<span class="empty">NO SCORES YET</span>';
+
+          return { title: title.replace(/^Fake\s+/i, ""), best: best };
+        });
+
+        // Best first; cabinets nobody has played yet sink to the bottom.
+        rows.sort((a, b) => (b.best ? b.best.score : -1) - (a.best ? a.best.score : -1));
+
+        document.getElementById("hallRows").innerHTML = rows
+          .map((row, i) => {
+            const played = !!row.best;
+            return (
+              '<div class="hall-row' + (played ? "" : " unplayed") + '">' +
+              '<span class="hall-rank">' + (played ? i + 1 : "–") + "</span>" +
+              '<span class="hall-game">' + row.title + "</span>" +
+              '<span class="hall-name">' + (played ? row.best.name : "---") + "</span>" +
+              '<span class="hall-score">' + (played ? row.best.score : "—") + "</span>" +
+              "</div>"
+            );
+          })
+          .join("");
+      }
+
+      paintScores();
+
+      // Coming back from a game should show the score you just set.
+      window.addEventListener("pageshow", paintScores);
     </script>
   </body>
 </html>

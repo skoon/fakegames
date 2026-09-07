@@ -142,3 +142,99 @@ assertion would ever have found that.
 
 All eight signature mechanics landed across five phases. 412 assertions, up from
 156 at the end of step 3.
+
+## Step 5 — partial (three items answered and done)
+
+- [x] Vendored Phaser: `vendor/phaser.min.js`, 3.80.1, 1.13 MB. Both Phaser
+      games point at it; Dig Dug moved up from 3.60. Verified by booting both
+      with the network fully blocked.
+- [x] Touch controls: **deferred** by decision. No code.
+- [x] Renamed `faskeasteroids.html` to `fakeasteroids.html` (git mv), with the
+      index link and the test runner's source map updated.
+
+Still open in step 5: combined leaderboard, consistent scaling, blurb rewrite.
+
+**Verification limit worth recording:** Dig Dug's engine upgrade is confirmed
+only as far as booting and rendering. Its *controls* cannot be verified while
+step 6 is outstanding, because they do not work at all. So "3.60 to 3.80.1 broke
+nothing" is currently a claim about startup, not about play.
+
+**Noticed, not actioned:** Breakout still loads Tailwind from a CDN at runtime,
+so it is the one cabinet that still needs the network to look right. Same class
+of problem as the Phaser CDN, but outside what was asked for.
+
+## Step 6 done — the Phaser games can be played again
+
+Root cause: Phaser's keyboard manager ignores any event whose
+`defaultPrevented` is already true, and `arcade/input.js` calls
+`preventDefault()` on every bound key. Both Phaser games went deaf the moment
+the shared input module landed in step 3, and stayed that way through step 4.
+
+Fix: both games now read `Arcade.Input` and use no Phaser keyboard at all.
+`this.cursors`, `this.wasd`, `this.spaceKey` and every
+`input.keyboard.once('keydown-...')` are gone; start, restart and pump/fire are
+polled in `update()`.
+
+Two further bugs found on the way in:
+- Spy Hunter bound **M** itself *and* the shell binds it, so mute toggled twice
+  and cancelled out. The shell owns it now; `syncMuteButton()` keeps the label
+  honest.
+- Spy Hunter's `R` to restart went through the same dead Phaser path.
+
+Dig Dug also gained the start screen that was asked for: title, PRESS SPACE,
+score table, control hints. It shows on a fresh game only, not between levels —
+both arrive through `scene.restart()`, so `STORE.showTitle` separates them.
+
+### The testing gap is closed
+
+New `tests/integration/` — real Phaser from `vendor/`, real `arcade/` module,
+real `KeyboardEvent`s dispatched at the window, no stubs anywhere. `run.ps1`
+runs these alongside the stubbed suites.
+
+Counterfactual, on a copy reverted to the Phaser-keyboard code:
+
+```
+digdug e2e:    PASS the shared input saw it
+               FAIL the player faces left / actually moved left
+               FAIL right/down/up/left, FAIL the pump went out
+spyhunter e2e: PASS the shared input saw the space
+               FAIL the game started
+```
+
+That pass-then-fail pair is the exact fingerprint of the bug: the key arrives,
+the game never hears it. The old suites could not express that, because they
+replace Phaser wholesale.
+
+Also fixed: `run.ps1` treated Chrome's stderr warnings as fatal under
+`$ErrorActionPreference='Stop'`. It relaxes that around the native call now.
+
+## Step 5 done
+
+451 assertions across 10 suites (8 stubbed, 2 end-to-end). Every page boots with
+the network blocked.
+
+- **Combined leaderboard.** The index reads `arcade:scores:*` through
+  `Arcade.Scores`. Each cabinet card shows its own best, and a Hall of Fame
+  ranks the top entry per game with unplayed cabinets sinking to the bottom. It
+  repaints on `pageshow`, so coming back from a game shows the score you just
+  set.
+- **Scaling.** `Arcade.Shell.fit(selector)` scales a whole game container about
+  its centre and re-measures on resize. Applied to Tempest (800x800), Pole
+  Position (1024x768) and Space Invaders. Asteroids is 800x600 and did not need
+  it; Breakout already scales through CSS; the Phaser games use Scale.FIT.
+- **Blurbs.** All seven rewritten to describe what the games now do.
+
+**A trap worth recording:** `fit()` must never be given `body`. The shell's back
+link and pause overlay are `position: fixed` children of body, and a transformed
+ancestor makes fixed positioning relative to *it* rather than the viewport,
+which silently breaks both. I wrote `fit("body")` for Asteroids first. It now
+refuses body and html outright, with a test.
+
+## Still open
+
+- Touch controls — deferred by decision, not done.
+- Breakout still loads Tailwind from a CDN, so it is the one cabinet that needs
+  the network to look right. Same class of problem as the Phaser CDN.
+- Per-cabinet items from the service manual: Pole Position's roadside scenery
+  and fog, Spy Hunter's road curves and enemy archetypes, Tempest's pulsars and
+  fuseballs, Dig Dug's authored stage layouts, Space Invaders' attract mode.

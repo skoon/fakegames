@@ -503,7 +503,7 @@ class GameScene extends Phaser.Scene {
     this.player = this.add.sprite(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'car');
     this.player.setOrigin(0.5, 0.5);
 
-    this.input.keyboard.once('keydown', () => startAudio(this));
+    window.addEventListener('keydown', () => startAudio(this), { once: true });
     
     // Mute state and UI
     this.muted = false;
@@ -511,18 +511,12 @@ class GameScene extends Phaser.Scene {
       fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', backgroundColor: '#222222', padding: { x: 6, y: 4 },
     }).setOrigin(1, 0).setDepth(10).setInteractive();
     this.muteButton.on('pointerdown', () => this.toggleMute());
-    const mKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M);
-    mKey.on('down', () => this.toggleMute());
+    // M is the shell's, not ours - binding it here too toggled mute twice and
+    // cancelled itself out. syncMuteButton() in update keeps the label honest.
 
-    this.cursors = this.input.keyboard.createCursorKeys();
-    this.wasd = {
-      W: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      A: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      S: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      D: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-    };
+    // R restarts; everything else is already in the default map.
+    Arcade.Input.bind({ restart: ['KeyR'] });
 
-    this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.bullets = this.add.group();
     this.lastFired = 0;
 
@@ -590,9 +584,7 @@ class GameScene extends Phaser.Scene {
       { fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', align: 'center' }
     ).setOrigin(0.5).setDepth(21);
 
-    this.input.keyboard.once('keydown-SPACE', () => {
-      this.startGame();
-    });
+    // Start and restart are polled in update() from the shared input.
 
     // Phaser drives its own loop, so the shell tells the scene to suspend.
     Arcade.Shell.init({
@@ -642,7 +634,20 @@ class GameScene extends Phaser.Scene {
 
 
   update(time, delta) {
-    if (!this.started || this.gameOver) return;
+    // The shell's M can change mute behind our back, so the label re-syncs here.
+    this.syncMuteButton();
+
+    if (!this.started) {
+      if (Arcade.Input.justPressed('fire')) this.startGame();
+      return;
+    }
+
+    if (this.gameOver) {
+      // Blocked while the initials overlay owns the keyboard, which is right:
+      // enter your initials, then restart.
+      if (Arcade.Input.justPressed('restart')) this.scene.restart();
+      return;
+    }
 
     const dt = delta / 1000;
 
@@ -670,19 +675,19 @@ class GameScene extends Phaser.Scene {
     // Shift deploys whatever you came out of the van with.
     if (Arcade.Input.justPressed('fire2')) this.deployWeapon();
 
-    if (this.cursors.up.isDown || this.wasd.W.isDown) {
+    if (Arcade.Input.held('up')) {
       this.carY -= CAR.moveSpeed * dt;
     }
-    if (this.cursors.down.isDown || this.wasd.S.isDown) {
+    if (Arcade.Input.held('down')) {
       this.carY += CAR.moveSpeed * dt;
     }
     const yMargin = 80;
     this.carY = Phaser.Math.Clamp(this.carY, yMargin, GAME_HEIGHT - yMargin);
 
-    if (this.cursors.left.isDown || this.wasd.A.isDown) {
+    if (Arcade.Input.held('left')) {
       this.carX -= CAR.turnSpeed * dt;
     }
-    if (this.cursors.right.isDown || this.wasd.D.isDown) {
+    if (Arcade.Input.held('right')) {
       this.carX += CAR.turnSpeed * dt;
     }
     this.carX = Phaser.Math.Clamp(
@@ -693,7 +698,7 @@ class GameScene extends Phaser.Scene {
     this.player.x = this.carX;
     this.player.y = this.carY;
 
-    if (this.spaceKey.isDown && time > this.lastFired + FIRE_RATE) {
+    if (Arcade.Input.held('fire') && time > this.lastFired + FIRE_RATE) {
       const b = this.add.sprite(this.carX, this.carY - CAR.h / 2 - 8, 'bullet');
       b.setDepth(5);
       this.bullets.add(b);
@@ -1112,7 +1117,6 @@ class GameScene extends Phaser.Scene {
     }
     showTable();
 
-    this.input.keyboard.once('keydown-R', () => this.scene.restart());
   }
   updateHUD() {
     this.livesText.setText(`LIVES: ${this.playerLives}`);

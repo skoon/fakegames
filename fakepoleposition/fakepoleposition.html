@@ -1304,7 +1304,10 @@
       });
 
       renderScores();
-      window.onload = init;
+      window.onload = function () {
+        init();
+        Arcade.Shell.fit("#game-container");
+      };
 
       // Hook up Engine Sound in Update
       const originalUpdate = update;

@@ -43,7 +43,7 @@ const ROCK_COLOR = 0x999999;
 const ROCK_SHADOW = 0x777777;
 const ROCK_HILIGHT = 0xAAAAAA;
 
-const STORE = { score: 0, lives: 3, level: 1 };
+const STORE = { score: 0, lives: 3, level: 1, showTitle: true };
 const GAME_KEY = 'digdug';
 
 // Dig Dug shipped silent. These are the beats that most want a sound.
@@ -109,10 +109,6 @@ class DigDugScene extends Phaser.Scene {
         this.livesText = this.add.text(8, HEIGHT - 16, '', ts);
         this.levelText = this.add.text(WIDTH - 8, 4, '', ts).setOrigin(1, 0);
 
-        this.cursors = this.input.keyboard.createCursorKeys();
-        this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-        this.spaceWasDown = false;
-
         this.isPumping = false;
         this.pumpTimer = 0;
         this.isDead = false;
@@ -121,6 +117,11 @@ class DigDugScene extends Phaser.Scene {
         this.paused = false;
         this.rocksLanded = 0;
         this.vegetable = null;
+
+        // The title only shows for a fresh game, not between levels - both
+        // arrive here through scene.restart().
+        this.awaitingStart = STORE.showTitle;
+        if (this.awaitingStart) this.buildTitleScreen();
 
         this.updateUI();
 
@@ -133,8 +134,59 @@ class DigDugScene extends Phaser.Scene {
         });
     }
 
+    /* ---------- title screen ---------- */
+
+    buildTitleScreen() {
+        const mid = WIDTH / 2;
+        this.titleParts = [
+            this.add.rectangle(mid, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0.82).setDepth(19),
+            this.add.text(mid, HEIGHT / 2 - 96, 'FAKE DIGDUG', {
+                fontSize: '34px', fontFamily: 'monospace', color: '#FFCC33',
+            }).setOrigin(0.5).setDepth(20),
+            this.add.text(mid, HEIGHT / 2 - 56, 'PRESS SPACE TO START', {
+                fontSize: '14px', fontFamily: 'monospace', color: '#ffffff',
+            }).setOrigin(0.5).setDepth(20),
+            this.add.text(mid, HEIGHT / 2 - 20, Arcade.Scores.format(GAME_KEY), {
+                fontSize: '12px', fontFamily: 'monospace', color: '#ffff88', align: 'center',
+            }).setOrigin(0.5, 0).setDepth(20),
+            this.add.text(
+                mid,
+                HEIGHT / 2 + 74,
+                'ARROWS DIG  ·  SPACE PUMPS\nDROP ROCKS ON THEM - TWO AT ONCE PAYS MORE\n\nP PAUSE  ·  M MUTE  ·  ESC ARCADE',
+                { fontSize: '11px', fontFamily: 'monospace', color: '#88dd88', align: 'center' }
+            ).setOrigin(0.5, 0).setDepth(20),
+        ];
+    }
+
+    beginPlay() {
+        this.awaitingStart = false;
+        STORE.showTitle = false;
+        for (const part of this.titleParts) part.destroy();
+        this.titleParts = [];
+    }
+
+    restartGame() {
+        STORE.score = 0;
+        STORE.lives = 3;
+        STORE.level = 1;
+        STORE.showTitle = true;
+        this.scene.restart();
+    }
+
     update(_time, delta) {
-        if (this.isDead || this.paused) return;
+        // Both of these states are reachable only through the shared input, so
+        // they are polled here rather than through Phaser key events.
+        if (this.awaitingStart) {
+            if (Arcade.Input.justPressed('fire')) this.beginPlay();
+            return;
+        }
+
+        if (this.isDead) {
+            if (Arcade.Input.justPressed('fire')) this.restartGame();
+            return;
+        }
+
+        if (this.paused) return;
 
         if (this.respawnTimer > 0) {
             this.respawnTimer -= delta;
@@ -410,15 +462,18 @@ class DigDugScene extends Phaser.Scene {
     handleInput(_delta) {
         if (this.isPumping) return;
 
-        const left = this.cursors.left.isDown;
-        const right = this.cursors.right.isDown;
-        const up = this.cursors.up.isDown;
-        const down = this.cursors.down.isDown;
+        // Read the shared input layer, not Phaser's keyboard. Arcade.Input
+        // calls preventDefault to stop the page scrolling, and Phaser ignores
+        // any event that has already been default-prevented - so a game that
+        // reads both gets nothing at all.
+        const left = Arcade.Input.held('left');
+        const right = Arcade.Input.held('right');
+        const up = Arcade.Input.held('up');
+        const down = Arcade.Input.held('down');
 
-        if (this.spaceKey.isDown && !this.spaceWasDown) {
+        if (Arcade.Input.justPressed('fire')) {
             this.startPump();
         }
-        this.spaceWasDown = this.spaceKey.isDown;
 
         if (left) {
             this.player.facing = 'left';
@@ -941,12 +996,6 @@ class DigDugScene extends Phaser.Scene {
         }
         showTable();
 
-        this.input.keyboard.once('keydown-SPACE', () => {
-            STORE.score = 0;
-            STORE.lives = 3;
-            STORE.level = 1;
-            this.scene.restart();
-        });
     }
 
     checkLevelComplete() {
@@ -991,4 +1040,4 @@ const config = {
     },
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);

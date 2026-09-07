@@ -233,3 +233,69 @@ suite("arcade.Audio: custom graphs can route through the mute knob", function ()
     "created " + audioBook.contextsCreated
   );
 });
+
+/* ------------------------------------------------------------------ fit --- */
+
+function sizedBox(w, h) {
+  const el = document.createElement("div");
+  el.style.width = w + "px";
+  el.style.height = h + "px";
+  el.style.position = "absolute";
+  el.style.left = "-9999px";
+  document.body.appendChild(el);
+  return el;
+}
+
+function scaleOf(el) {
+  const m = /scale\(([\d.]+)\)/.exec(el.style.transform || "");
+  return m ? parseFloat(m[1]) : null;
+}
+
+suite("arcade.Shell.fit: shrinks what is too big, leaves the rest alone", function () {
+  const small = sizedBox(50, 50);
+  small.id = "fit-small";
+  Arcade.Shell.fit("#fit-small");
+  check("a small game is not scaled", scaleOf(small) === 1, "scale " + scaleOf(small));
+
+  const huge = sizedBox(window.innerWidth * 4, window.innerHeight * 4);
+  huge.id = "fit-huge";
+  Arcade.Shell.fit("#fit-huge");
+  const s = scaleOf(huge);
+  check("an oversized game is scaled down", s !== null && s < 1, "scale " + s);
+  check("and not scaled to nothing", s > 0, "scale " + s);
+  check("it scales about its centre", huge.style.transformOrigin === "center center");
+
+  small.remove();
+  huge.remove();
+});
+
+suite("arcade.Shell.fit: refuses to scale the page itself", function () {
+  // The back link and pause overlay are position:fixed children of body.
+  // Transforming body would reparent them to it and break both.
+  check("body is refused", Arcade.Shell.fit("body") === null);
+  check("html is refused", Arcade.Shell.fit("html") === null);
+  check("body was left untouched", !document.body.style.transform);
+});
+
+suite("arcade.Shell.fit: is safe on a selector that matches nothing", function () {
+  check("returns null rather than throwing", Arcade.Shell.fit("#nothing-here") === null);
+});
+
+suite("arcade.Shell.fit: re-measures instead of compounding", function () {
+  const box = sizedBox(window.innerWidth * 3, window.innerHeight * 3);
+  box.id = "fit-again";
+
+  const apply = Arcade.Shell.fit("#fit-again");
+  const first = scaleOf(box);
+
+  apply();
+  apply();
+  const third = scaleOf(box);
+
+  check(
+    "applying repeatedly gives the same scale",
+    Math.abs(third - first) < 0.0001,
+    first + " then " + third
+  );
+  box.remove();
+});

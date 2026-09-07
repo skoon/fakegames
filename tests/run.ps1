@@ -78,7 +78,7 @@ function Build-Sources {
     "spaceinvaders.js" = "fakespaceinvaders\fakespaceinvaders.html"
     "poleposition.js"  = "fakepoleposition\fakepoleposition.html"
     "breakout.js"      = "fakebreakout\fakebreakout.html"
-    "asteroids.js"     = "fakeasteroids\faskeasteroids.html"
+    "asteroids.js"     = "fakeasteroids\fakeasteroids.html"
   }
   foreach ($name in $inline.Keys) {
     Export-InlineScript -HtmlPath (Join-Path $rootDir $inline[$name]) `
@@ -94,11 +94,17 @@ function Invoke-Page {
   $uri = ([Uri]$PagePath).AbsoluteUri
   $profileDir = Join-Path $buildDir "chrome-profile"
 
+  # Chrome writes warnings to stderr, and PowerShell turns native stderr into
+  # error records - which $ErrorActionPreference='Stop' then throws on, even
+  # when the run succeeded. Relax it just around the call.
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
   $raw = & $Chrome `
     --headless=new --disable-gpu --no-sandbox --no-first-run `
     --virtual-time-budget=8000 `
     --user-data-dir="$profileDir" `
     --dump-dom $uri 2>$null | Out-String
+  $ErrorActionPreference = $prev
 
   $m = [regex]::Match($raw, '(?s)@@START@@\r?\n(.*?)\r?\n@@END@@')
   if (-not $m.Success) {
@@ -114,16 +120,28 @@ $chrome = Find-Chrome
 Write-Host "browser: $chrome"
 Build-Sources
 
-$pages = Get-ChildItem (Join-Path $testsDir "pages") -Filter *.html | Sort-Object Name
+# pages/ runs games against stubs; integration/ runs them against real Phaser
+# and real key events, which is the seam the stubs cannot reach.
+$pages = @()
+$pages += Get-ChildItem (Join-Path $testsDir "pages") -Filter *.html | Sort-Object Name
+$integrationDir = Join-Path $testsDir "integration"
+if (Test-Path $integrationDir) {
+  $pages += Get-ChildItem $integrationDir -Filter *.html | Sort-Object Name
+}
+
 if ($Only -ne "") {
-  $pages = $pages | Where-Object { $_.BaseName -like "*$Only*" }
+  $pages = $pages | Where-Object { $_.BaseName -like "*$Only*" -or $_.Directory.Name -like "*$Only*" }
 }
 if (-not $pages) { throw "No test pages matched." }
 
 $failed = 0
 foreach ($page in $pages) {
   Write-Host ""
-  Write-Host "$($page.BaseName)" -ForegroundColor Cyan
+  $label = $page.BaseName
+  if ($page.Directory.Name -eq "integration") {
+    $label = "$label (e2e, real phaser)"
+  }
+  Write-Host $label -ForegroundColor Cyan
   $result = Invoke-Page -Chrome $chrome -PagePath $page.FullName
   Write-Host $result.Text
   if (-not $result.Ok) { $failed++ }

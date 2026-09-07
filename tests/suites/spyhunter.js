@@ -343,9 +343,9 @@ suite("spyhunter: the controls are dead while inside the van", function () {
 
   // Driving input must not move the car while it is out of sight.
   const x = scene.carX;
-  scene.cursors.left.isDown = true;
+  Arcade.Input._press("ArrowLeft");
   scene.update(1000, 16);
-  scene.cursors.left.isDown = false;
+  Arcade.Input._release("ArrowLeft");
 
   check("the car did not move", scene.carX === x, "x " + scene.carX);
   check("still boarding", scene.playerState === "boarding");

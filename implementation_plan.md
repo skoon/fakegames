@@ -1,122 +1,181 @@
-# Implementation plan — signature mechanics
+# Implementation plan — one arcade
 
-Service manual step 4: give each cabinet the one mechanic its original is
-remembered for. Supersedes the step-3 plan (shared `arcade/` module), which is
-complete — see [task.md](task.md).
+Service manual step 5. Supersedes the step-4 plan (signature mechanics), which
+is complete — see [task.md](task.md).
 
-## The seven
+The theme: seven games now share a module, a look and a set of controls, but the
+front door still doesn't know they exist and two of them won't run offline.
 
-| Game | Mechanic | Size | Changes the game model? |
-| --- | --- | --- | --- |
-| Space Invaders | Mystery saucer | M | No — additive |
-| Asteroids | Firing UFO + hyperspace | M | No — additive |
-| Tempest | Superzapper | S | No — additive |
-| Dig Dug | Rock chains + vegetable bonus | M | No — additive |
-| Tempest | Web shapes | M | Yes — lane geometry stops being a circle |
-| Breakout | Power-ups | M | Yes — one ball becomes many |
-| Pole Position | Countdown timer | M | Yes — laps stop being the win condition |
-| Spy Hunter | Weapons van | L | Yes — a whole weapon subsystem |
+## The work
 
-## Ordering: by risk, not by impact
+| Item | Size | Decision needed? |
+| --- | --- | --- |
+| Combined leaderboard on the index | M | No |
+| Consistent scaling for small screens | M | No — but see below |
+| Blurbs that match the games | S | No |
+| Vendored Phaser | S | **Yes** — repo size |
+| Touch controls | L | **Yes** — worth building at all? |
 
-The service manual ordered these by what each adds to its game. I want to invert
-that and go by risk instead, because four of the eight are purely additive and
-four rewrite something load-bearing. Landing the additive four first means the
-shared module and the test rig get exercised across four games before anything
-structural moves.
+## Checked before planning
 
-Step 3 is the argument for this: I moved fast, retrofitted Spy Hunter before
-writing its suite, and a bad edit boundary silently deleted its start overlay.
-The smoke test passed because the crash only fired on SPACE. Front-loading the
-low-risk work buys confidence cheaply.
+**`localStorage` is shared across `file://` directories.** I tested it: a page
+in the repo root writes a key, a page in a subdirectory reads it back. So the
+index really can show scores the games saved, without a server. That was the
+load-bearing assumption for the leaderboard and it holds.
 
-**Phase 1 — additive.** Invaders' saucer, Asteroids' UFO fire and hyperspace,
-Tempest's superzapper, Dig Dug's chains and vegetable. Four games, no
-restructuring. Suite per feature, written alongside.
+## 1. Combined leaderboard
 
-**Phase 2 — Tempest web shapes.** `calculateLaneGeometry()` becomes data-driven
-over a `WEBS` table. Open webs (a V, a line, a cross) mean the player can no
-longer wrap from lane 15 to lane 0, so movement and flipper logic need a
-`closed` flag. Self-contained to one game.
+The index loads `arcade/scores.js` and reads each game's table through
+`Arcade.Scores`. Each cabinet card gains its own best score and initials; below
+the cabinets, a combined board lists the top entry per game, ranked.
 
-**Phase 3 — Breakout power-ups.** The real work is `ball` becoming `balls[]`;
-multiball is worthless without it and bolting it on later is worse. Drops fall
-from destroyed bricks and are caught with the paddle: wide, multiball, laser,
-catch, slow.
+Games with no score yet show nothing rather than a zero row. Pole Position has a
+score now — that was the step-3 gap the countdown closed — so all seven appear.
 
-**Phase 4 — Pole Position countdown.** Replaces the lap-count win condition.
-Brings a score with it, which finally gives this cabinet a high-score table —
-the gap I left open in step 3.
+## 2. Scaling
 
-**Phase 5 — Spy Hunter weapons van.** The largest single piece. Van entity,
-ramp/entry state machine, weapon inventory, rear-fire deployment, HUD.
+Tempest is 800×800 and Pole Position 1024×768, both before their HUD. Neither
+fits a 13" laptop, which is the actual complaint in the manual.
 
-## Design decisions worth stating
+CSS alone won't do it. The canvas would scale, but every HUD, overlay and score
+panel is absolutely positioned in pixels against the container, so they would
+drift. So: `Arcade.Shell.fit(selector)` applies a `transform: scale()` to the
+whole game container, origin top-centre, recomputed on resize. Canvas and
+chrome scale together and nothing needs repositioning.
 
-**Mystery saucer.** Spawns on a timer, crosses the top, worth 50/100/150/300.
-The arcade's values are famously a deterministic function of your shot count; I
-plan to pick randomly from that table rather than reproduce the counter, unless
-you want the authentic version.
+The two Phaser games already have `Scale.FIT` and skip this entirely.
 
-**Hyperspace and superzapper both want a second button.** `Arcade.Input` already
-maps `fire2` to Shift. Both go there, so the whole arcade keeps one convention.
+## 3. Blurbs
 
-**UFO sizes.** Large saucer fires roughly toward the player (200 pts), small
-saucer fires accurately and gets more accurate as your score climbs (1000 pts).
+Every card's copy is now out of date, and understates most of them. Breakout's
+"grab power-ups" — the line the manual called out as a lie in step 1 — has
+quietly become true, so that one resolves itself.
 
-**Rock chains.** 1 enemy 1000, 2 → 2500, 3 → 4000, 4 → 6000. The vegetable
-appears at the centre tunnel after the second rock is dropped and times out.
-Both fold into the `ENEMY_SCORE`/`killEnemy` path that step 2 established, so
-scoring stays owned by one function.
+## 4. Vendored Phaser
 
-**Power-up drops** are a new entity type with their own collision pass. Effects
-are timed except multiball. Laser paddle adds a second projectile array.
+Dig Dug loads 3.60 and Spy Hunter 3.80.1, both from jsdelivr at page load. That
+is no offline play, two engine versions, and a third-party outage away from two
+dead cabinets.
 
-**Pole Position's countdown** starts at 90 seconds, and crossing the line adds
-time rather than simply counting laps. Running out is a distinct end state from
-finishing — GAME OVER versus FINISH, with different results panels.
+Plan: download 3.80.1 once to `vendor/phaser.min.js` (~1.1 MB minified) and
+point both games at it. **Dig Dug moves from 3.60 to 3.80.1**, so its suite and a
+real-browser boot both have to pass before I call it done.
 
-**Weapons van.** Our road is a straight scrolling tile, with no side roads to
-pull out of. So the van enters ahead of the player, matches speed, and opens its
-rear ramp; you drive into the rear to collect. That is a deliberate deviation
-from the arcade's side-road entry, forced by the road we have.
+## 5. Touch controls
+
+The shared shell grows an on-screen d-pad and two buttons, shown only under
+`@media (pointer: coarse)` so desktop is untouched. They drive `Arcade.Input`
+through the `_press`/`_release` seam the tests already use, so no game changes.
+
+This is the largest item and the one I am least sure is worth it. Every one of
+these games was designed around a keyboard, several need precision (Tempest's
+lane taps, Pole Position's steering), and on-screen controls would be a
+compromise everywhere. It is also the only item here that no other item depends
+on.
 
 ## Testing
 
-Every feature gets assertions written *with* it, not after. Step 3 proved that
-smoke tests catch load failures and nothing else — a screenshot found the bug
-they missed. So each phase ends with: suites green, all pages boot clean, and a
-screenshot of anything with a visual component.
+Leaderboard and scaling get suites. The blurbs and the vendored library get a
+boot check per page. Counterfactual discipline stays: each new behaviour must
+fail with the mechanic disabled.
 
-The counterfactual discipline stays: for each new mechanic, confirm the suite
-fails when the mechanic is disabled.
-
-## Risks
-
-- **Breakout's multiball touches every collision branch.** Lives, level
-  completion and the launch flow all assume exactly one ball.
-- **Open webs break wraparound arithmetic** in three places: player movement,
-  flipper lane changes, and tanker splitting.
-- **Pole Position's timer interacts with pause.** The shell's `now()` already
-  handles this; the lap timer must use it rather than raw `dt` accumulation.
-- **Spy Hunter's van is a state machine inside a game that has none.** It needs
-  an explicit player state (driving / entering / inside / exiting) that nothing
-  else in that file currently has.
-- **Scope.** This is eight mechanics across seven games. It is the largest step
-  in the manual by some distance.
+Given the last four phases, I will also render a page rather than trusting green
+suites — that has caught three real defects this session that no assertion did.
 
 ## Out of scope
 
-Everything in the manual's step 5: combined leaderboard, consistent scaling,
-vendored Phaser, touch controls, marquee copy.
+Everything still open in the manual's per-cabinet lists: Pole Position's
+roadside scenery and fog, Spy Hunter's road curves and enemy archetypes,
+Tempest's pulsars and fuseballs, Dig Dug's authored stage layouts, Space
+Invaders' attract mode.
 
-## Open questions
+## Questions
 
-1. **How far this session?** All five phases, or land Phase 1 (the four additive
-   mechanics) and review before anything structural moves? I recommend the
-   latter.
-2. **Pole Position:** does the countdown *replace* the 3-lap win condition, or
-   sit alongside it (finish 3 laps before the clock runs out)? Alongside is less
-   authentic but keeps the results panel from step 2 meaningful.
-3. **Mystery saucer scoring:** random from {50,100,150,300}, or the authentic
-   shot-count formula where the 23rd shot and every 15th after is worth 300?
+1. **Vendor Phaser?** It puts ~1.1 MB in the repo and moves Dig Dug up two minor
+   versions. I recommend yes — offline play and one engine version were both
+   listed as problems. Say no and both games keep the CDN.
+2. **Touch controls — build or defer?** I lean defer: it is the biggest item, it
+   compromises seven keyboard-designed games, and nothing else needs it. Happy to
+   build it if you play on a tablet.
+3. **Rename `fakeasteroids/faskeasteroids.html`?** The typo has been in the
+   manual since step 1. It is a rename rather than a delete, but it changes a URL,
+   so I would rather ask than assume.
+
+---
+
+# Step 6 — the Phaser games are deaf
+
+**Step 5 is paused.** These are blocking: two of the seven cabinets cannot
+currently be played at all.
+
+## Root cause (confirmed, not guessed)
+
+Phaser's keyboard manager begins its handler with `if (event.defaultPrevented)
+return;`. `arcade/input.js` calls `e.preventDefault()` on every bound key —
+arrows, WASD, Space, Shift, Enter — to stop the page scrolling. So every key the
+two Phaser games care about is marked handled before Phaser ever sees it.
+
+Isolated on a bare Phaser scene with nothing else loaded:
+
+```
+WITH arcade/input.js:   cursors.left.isDown = false, keydown-SPACE never fires
+WITHOUT preventDefault: cursors.right.isDown = true
+```
+
+This landed in step 3 and has been broken through all of step 4.
+
+## What is actually broken
+
+Wider than the three symptoms reported:
+
+| Game | Symptom |
+| --- | --- |
+| Dig Dug | Arrow movement dead |
+| Dig Dug | Space (pump) dead — the game is unplayable, not just hard |
+| Dig Dug | Space to restart after game over dead |
+| Spy Hunter | Space to start dead — reported |
+| Spy Hunter | Arrow/WASD steering dead |
+| Spy Hunter | Space to fire dead |
+| Spy Hunter | R to restart dead |
+
+The five canvas games are unaffected: they read `Arcade.Input` directly, which
+is the side of the seam that works.
+
+## Why the suites did not catch it
+
+`tests/lib/stubs.js` replaces Phaser wholesale. `addKey()` returns a stub whose
+`isDown` is always false, and every suite drives `Arcade.Input._press` directly.
+The seam between the shared input module and *real* Phaser was never exercised
+by anything. 412 assertions, none of them touching the thing that broke.
+
+## The fix
+
+Move both Phaser games onto `Arcade.Input`, deleting their use of Phaser's
+keyboard entirely. That is what step 3 should have done — I explicitly left them
+on Phaser's own keyboard and recorded it as "Audio, Scores and the back link
+only", which is precisely where the conflict came from.
+
+- Dig Dug: `cursors` and `spaceKey` become `Arcade.Input.held/justPressed`.
+- Spy Hunter: `cursors`, `wasd`, `spaceKey` and both `once('keydown-...')`
+  handlers become `Arcade.Input`.
+
+## Closing the testing gap
+
+A green suite proved nothing here, so the fix is not done until something would
+have caught it. Add a real-browser integration check per Phaser game: load the
+actual page with real Phaser, dispatch genuine `KeyboardEvent`s at the window,
+and assert the game responds. No stubs on that path.
+
+## Also requested: a Dig Dug start screen
+
+A feature rather than a bug — Dig Dug currently drops you straight into a level
+with no title, no controls and no high-score board, which is the only cabinet
+that still does. It gets the same treatment as the others: title, PRESS SPACE,
+score table, control hints.
+
+## Order
+
+1. Fix the input conflict in both Phaser games.
+2. Add the integration checks that would have caught it.
+3. Dig Dug start screen.
+4. Resume step 5.

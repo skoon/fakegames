@@ -48,17 +48,48 @@ function __flush() {
   el.textContent = banner;
 }
 
+let __ready = null;
+
+/**
+ * Holds the run back until fn() is true - Phaser boots its scene a few frames
+ * after load, so an integration page has nothing to assert against yet.
+ */
+function readyWhen(fn, timeoutMs) {
+  __ready = { fn: fn, deadline: Date.now() + (timeoutMs || 8000) };
+}
+
+function __runAll() {
+  for (const s of __suites) {
+    try {
+      s.fn();
+    } catch (e) {
+      __failures++;
+      __out.push("  THREW " + s.name + "  -> " + e.message);
+    }
+  }
+  __flush();
+}
+
+/** Polls the readiness gate, then runs. Without a gate, runs on the next tick. */
+function __startWhenReady() {
+  if (!__ready) {
+    __runAll();
+    return;
+  }
+  if (__ready.fn()) {
+    __runAll();
+    return;
+  }
+  if (Date.now() > __ready.deadline) {
+    __failures++;
+    __out.push("  FAIL  page never became ready to test");
+    __flush();
+    return;
+  }
+  setTimeout(__startWhenReady, 30);
+}
+
 window.addEventListener("load", function () {
   // Defer past the game's own window.onload handler.
-  setTimeout(function () {
-    for (const s of __suites) {
-      try {
-        s.fn();
-      } catch (e) {
-        __failures++;
-        __out.push("  THREW " + s.name + "  -> " + e.message);
-      }
-    }
-    __flush();
-  }, 0);
+  setTimeout(__startWhenReady, 0);
 });

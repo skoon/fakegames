@@ -131,6 +131,55 @@ Arcade.Shell = (function () {
       return Date.now() - this.pausedTotal();
     },
 
+    /**
+     * Scales a game to fit the window.
+     *
+     * Tempest is 800x800 and Pole Position 1024x768 before their HUD, so
+     * neither fits a laptop screen. CSS on the canvas alone will not do it:
+     * every HUD, overlay and results panel is absolutely positioned in pixels
+     * against the container, so scaling the canvas would leave them behind.
+     * Scaling the whole container about its centre keeps them together.
+     *
+     * The two Phaser games use Phaser's own Scale.FIT and do not call this.
+     */
+    fit(selector, options) {
+      const el = document.querySelector(selector);
+      if (!el) return null;
+
+      // The back link and pause overlay are position:fixed children of body. A
+      // transformed ancestor would make them relative to it instead of the
+      // viewport, so body itself must never be the thing that scales.
+      if (el === document.body || el === document.documentElement) {
+        console.warn("Arcade.Shell.fit: scale an inner container, not " + selector);
+        return null;
+      }
+
+      // Named cfg, not opts: the module-level `opts` belongs to init().
+      const cfg = options || {};
+      const margin = cfg.margin === undefined ? 24 : cfg.margin;
+
+      function apply() {
+        // Measure unscaled, or each pass would compound the last one.
+        el.style.transform = "none";
+        const width = el.offsetWidth;
+        const height = el.offsetHeight;
+        if (!width || !height) return;
+
+        const scale = Math.min(
+          1,
+          (window.innerWidth - margin) / width,
+          (window.innerHeight - margin) / height
+        );
+
+        el.style.transformOrigin = "center center";
+        el.style.transform = "scale(" + scale + ")";
+      }
+
+      apply();
+      window.addEventListener("resize", apply);
+      return apply;
+    },
+
     /** Test seam. */
     _reset() {
       paused = false;
