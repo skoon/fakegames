@@ -295,3 +295,21 @@ Noticed, not actioned:
   Scenery has its own scale and is unchanged.
 - Test-only: a suite that types "P" as an initial also pauses the game,
   because tests dispatch keys at window. `greenFlag()` now resets the shell.
+
+### Pass 2b - Pole Position cars as pixel art (done)
+- [x] Tests: variants are 44x20 and cached, lean follows steering, brake light
+      only while braking, tread rolls with distance (all failed first)
+- [x] Rectangle-built rear-view F1 sprite, cached per livery/lean/tread/brake
+- [x] `carBox()` is the one footprint; renderCar and the collision tests share it
+- [x] Player 5px per sprite pixel: same 220x100 footprint, PLAYER_SPRITE now
+      derived from the sprite size
+- [x] All suites green; sheet at 9x and in-game shots checked
+
+Fixed after looking: the helmet had a visor you cannot see from behind, the
+body was hard rectangles, and the brake light was red on the red engine cover
+where it barely showed. It now sits on the dark gearbox.
+
+Slip during the edit, caught and repaired: replacing the old car code cut
+through to the audio section and took the scenery/backdrop code with it. It
+was restored byte-for-byte from HEAD (4a9d756), and the diff against HEAD now
+touches only car code.

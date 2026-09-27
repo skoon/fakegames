@@ -377,17 +377,26 @@
       const NUM_CARS = 5;
       const CAMERA_DEPTH = 1 / Math.tan(((FIELD_OF_VIEW / 2) * Math.PI) / 180);
 
+      // Every car is the same pixel-art sprite, CAR_MAP_W x CAR_MAP_H sprite
+      // pixels, seen from behind. See the car sprites section.
+      const CAR_MAP_W = 44;
+      const CAR_MAP_H = 20;
+      const PLAYER_PIXEL = 5; // screen pixels per sprite pixel for the player
+
       // Collision is measured against the pictures, so these describe what
       // renderPlayer and renderCar actually draw.
       //
       // The player's car is fixed on screen, in pixels up from the bottom of
       // the canvas: `bottom` is where its rear wheels meet the road, `top` its
-      // nose, `halfWidth` half its width across the wheels.
-      const PLAYER_SPRITE = { top: 140, bottom: 40, halfWidth: 110 };
-      // At sprite scale 1, renderCar's body (80 wide) plus the wheels that
-      // stick out past it (0.6 x a 12-wide wheel each side) give this
-      // half-width in pixels.
-      const CAR_SPRITE_HALF_W = 40 + 0.6 * 12;
+      // highest point, `halfWidth` half its width across the wheels.
+      const PLAYER_SPRITE = {
+        bottom: 40,
+        top: 40 + CAR_MAP_H * PLAYER_PIXEL,
+        halfWidth: (CAR_MAP_W * PLAYER_PIXEL) / 2,
+      };
+      // AI cars are drawn at one screen pixel per sprite pixel per unit of
+      // sprite scale, so at scale 1 they are half the map wide.
+      const CAR_SPRITE_HALF_W = CAR_MAP_W / 2;
       // Roadside scenery keeps its own scale; it has nothing to match.
       const SCENERY_SCALE = 6000;
 
@@ -1076,6 +1085,8 @@
               y: spriteY,
               scale: spriteScale * carSpriteScale(),
               color: car.color,
+              lean: Math.sign(segment.curve), // they steer into the bend
+              tread: Math.floor(car.z / TREAD_STEP) % 2,
             });
           }
 
@@ -1099,7 +1110,7 @@
         for (let i = carsToDraw.length - 1; i >= 0; i--) {
           let c = carsToDraw[i];
           if (c.scenery) renderScenery(c.scenery, c.x, c.y, c.scale);
-          else renderCar(c.x, c.y, c.scale, c.color);
+          else renderCar(c.x, c.y, c.scale, c.color, c.lean, c.tread);
         }
 
         if (!isCrashed || Math.floor(Date.now() / 200) % 2 == 0) {
@@ -1239,87 +1250,131 @@
         ctx.fill();
       }
 
-      function renderCar(x, y, scale, color) {
-        // Skip if off screen or behind camera
+      /* --------------------------------------------------- car sprites ---
+       *
+       * A 1982-style F1 car from behind: wide rear wing on pylons, fat rear
+       * tyres, sidepods, an engine cover with a stripe, the driver's helmet,
+       * exhausts and a tail light. It is a list of rectangles in sprite
+       * pixels rather than a typed-out map - at 44 wide that is easier to get
+       * right, and it makes the lean frames a matter of sliding the upper
+       * parts sideways while the tyres stay planted.
+       *
+       * Each variant is drawn once into a small canvas and cached, then
+       * scaled up with smoothing off so the pixels stay crisp.
+       */
+      const TREAD_STEP = 60; // road units per tread phase
+      const TAIL_LIGHT = [21, 16]; // on the dark gearbox, so red shows on a red car
+
+      const CAR_COLORS = {
+        tyre: "#1c1c1e", tyreHi: "#46464c", tread: "#0a0a0c",
+        metal: "#8a8f98", dark: "#2a2a2e", shadow: "rgba(0, 0, 0, 0.35)",
+        helmet: "#ffd21e", helmetShade: "#c8980e", wingEnd: "#1a1a1a",
+        sheen: "rgba(255, 255, 255, 0.28)",
+        tailLight: "#7a1010", brakeLight: "#ff3030",
+      };
+
+      // The player plus one per AI colour; keys match the cars' `color`.
+      const LIVERIES = {
+        player: { body: "#e8201c", bodyDark: "#a0120e", stripe: "#ffffff" },
+        "#0000FF": { body: "#1f4fd8", bodyDark: "#12308a", stripe: "#ffd21e" },
+        "#00FF00": { body: "#1fa84a", bodyDark: "#127030", stripe: "#ffffff" },
+        "#FFFF00": { body: "#f2c81e", bodyDark: "#b08a10", stripe: "#1a1a1a" },
+        "#FFFFFF": { body: "#e8e8ec", bodyDark: "#a8a8b0", stripe: "#1f4fd8" },
+        "#00FFFF": { body: "#1ec8d8", bodyDark: "#128a96", stripe: "#ffffff" },
+      };
+
+      /** [x, y, w, h, colour] rectangles, back to front, in sprite pixels. */
+      function carParts(livery, lean, tread, brake) {
+        const L = LIVERIES[livery];
+        const C = CAR_COLORS;
+        const up = lean * 2; // wing and helmet sit furthest forward, so swing most
+        const mid = lean;
+        const parts = [
+          [3, 18, 38, 2, C.shadow],
+          [0, 6, 8, 14, C.tyre], [36, 6, 8, 14, C.tyre],
+          [1, 7, 1, 12, C.tyreHi], [37, 7, 1, 12, C.tyreHi],
+        ];
+        for (let y = 7 + tread; y < 19; y += 3) {
+          parts.push([2, y, 5, 1, C.tread], [38, y, 5, 1, C.tread]);
+        }
+        parts.push(
+          [8, 10, 3, 1, C.metal], [8, 15, 3, 1, C.metal], [33, 10, 3, 1, C.metal], [33, 15, 3, 1, C.metal],
+          // Sidepods and engine cover, with rounded shoulders and a sheen.
+          [11 + mid, 9, 22, 1, L.body], [10 + mid, 10, 24, 7, L.body], [10 + mid, 15, 24, 2, L.bodyDark],
+          [11 + mid, 10, 22, 1, C.sheen],
+          [18 + mid, 6, 8, 1, L.body], [17 + mid, 7, 10, 10, L.body], [18 + mid, 7, 8, 1, C.sheen],
+          [21 + mid, 6, 2, 8, L.stripe],
+          [18 + mid, 16, 8, 2, C.dark], [14 + mid, 16, 2, 2, C.metal], [28 + mid, 16, 2, 2, C.metal],
+          [TAIL_LIGHT[0] + mid, TAIL_LIGHT[1], 2, 2, brake ? C.brakeLight : C.tailLight],
+          [15 + up, 2, 1, 5, C.metal], [28 + up, 2, 1, 5, C.metal],
+          // The back of the helmet: a rounded crown, shaded underneath.
+          [20 + up, 3, 4, 1, C.helmet], [19 + up, 4, 6, 3, C.helmet], [19 + up, 6, 6, 1, C.helmetShade],
+          [3 + up, 0, 38, 3, L.body], [3 + up, 1, 38, 1, L.stripe],
+          [3 + up, 0, 2, 6, C.wingEnd], [39 + up, 0, 2, 6, C.wingEnd]
+        );
+        return parts;
+      }
+
+      const carSpriteCache = new Map();
+
+      /** One variant of the car, drawn on first use and cached. */
+      function carSprite(livery, lean, tread, brake) {
+        const key = livery + "|" + lean + "|" + tread + "|" + brake;
+        let sprite = carSpriteCache.get(key);
+        if (!sprite) {
+          sprite = document.createElement("canvas");
+          sprite.width = CAR_MAP_W;
+          sprite.height = CAR_MAP_H;
+          const g = sprite.getContext("2d");
+          for (const [x, y, w, h, color] of carParts(livery, lean, tread, brake)) {
+            g.fillStyle = color;
+            g.fillRect(x, y, w, h);
+          }
+          carSpriteCache.set(key, sprite);
+        }
+        return sprite;
+      }
+
+      /** Where an AI car drawn at (x, y) with this scale sits on screen. */
+      function carBox(x, y, scale) {
+        return { left: x - CAR_SPRITE_HALF_W * scale, right: x + CAR_SPRITE_HALF_W * scale, rearY: y };
+      }
+
+      function drawSprite(sprite, left, top, w, h) {
+        // Crisp pixels, except for far-off cars smaller than the sprite
+        // itself, which would only shimmer.
+        ctx.imageSmoothingEnabled = w < CAR_MAP_W;
+        ctx.drawImage(sprite, Math.round(left), Math.round(top), Math.round(w), Math.round(h));
+        ctx.imageSmoothingEnabled = true;
+      }
+
+      function renderCar(x, y, scale, color, lean, tread) {
         if (y < 0 || y > height || scale <= 0) return;
-
-        // Match player car proportions (player: w=180, h=80 at full size)
-        const s = scale;
-        const carW = Math.max(20, 80 * s);
-        const carH = Math.max(10, 40 * s);
-
-        // Shadow
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(
-          x - carW / 2 + carW * 0.1,
-          y - carH * 0.1,
-          carW * 0.8,
-          carH * 0.2
+        const box = carBox(x, y, scale);
+        drawSprite(
+          carSprite(color, lean || 0, tread || 0, false),
+          box.left, y - CAR_MAP_H * scale, CAR_MAP_W * scale, CAR_MAP_H * scale
         );
+      }
 
-        // Main body (like player car shape)
-        ctx.fillStyle = color;
-        ctx.fillRect(
-          x - carW / 2 - carW * 0.05,
-          y - carH * 0.75,
-          carW * 1.1,
-          carH * 0.25
-        ); // rear wing
-        ctx.fillRect(x - carW * 0.25, y - carH, carW * 0.5, carH); // main body
-        ctx.fillRect(
-          x - carW * 0.15,
-          y - carH - carH * 0.25,
-          carW * 0.3,
-          carH * 0.25
-        ); // cockpit
-
-        // Wheels (black)
-        ctx.fillStyle = "#222";
-        const wheelW = Math.max(4, carW * 0.15);
-        const wheelH = Math.max(6, carH * 0.6);
-        ctx.fillRect(
-          x - carW / 2 - wheelW * 0.6,
-          y - carH * 0.6,
-          wheelW,
-          wheelH
-        );
-        ctx.fillRect(
-          x + carW / 2 - wheelW * 0.4,
-          y - carH * 0.6,
-          wheelW,
-          wheelH
-        );
-
-        // Driver helmet
-        ctx.fillStyle = "#FFFF00";
-        const helmetR = Math.max(2, carH * 0.15);
-        ctx.beginPath();
-        ctx.arc(x, y - carH * 0.75, helmetR, 0, Math.PI * 2);
-        ctx.fill();
+      /** Which frame the player's car shows: steering, braking, tyres rolling. */
+      function playerCarFrame() {
+        return {
+          lean: keyLeft ? -1 : keyRight ? 1 : 0,
+          brake: keySlower,
+          tread: Math.floor(playerZ / TREAD_STEP) % 2,
+        };
       }
 
       function renderPlayer() {
-        const carX = width / 2;
-        const carY = height - 120;
-        const carW = 180;
-        const carH = 80;
-
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(carX - carW / 2 + 20, carY + carH - 10, carW - 40, 20);
-
-        ctx.fillStyle = "#FF0000";
-        ctx.fillRect(carX - carW / 2 - 10, carY + 20, carW + 20, 20);
-        ctx.fillRect(carX - 40, carY, 80, carH);
-        ctx.fillRect(carX - 20, carY - 20, 40, 20);
-
-        ctx.fillStyle = "#222";
-        ctx.fillRect(carX - carW / 2 - 20, carY + 30, 30, 50);
-        ctx.fillRect(carX + carW / 2 - 10, carY + 30, 30, 50);
-
-        ctx.fillStyle = "#FFFF00";
-        ctx.beginPath();
-        ctx.arc(carX, carY + 20, 14, 0, Math.PI * 2);
-        ctx.fill();
+        const f = playerCarFrame();
+        drawSprite(
+          carSprite("player", f.lean, f.tread, f.brake),
+          width / 2 - PLAYER_SPRITE.halfWidth,
+          height - PLAYER_SPRITE.top,
+          PLAYER_SPRITE.halfWidth * 2,
+          PLAYER_SPRITE.top - PLAYER_SPRITE.bottom
+        );
       }
 
       /* ------------------------------------------------------- scenery --- */

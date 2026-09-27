@@ -416,3 +416,59 @@ mid-air rather than skipping it.
 
 Pulsars and fuseballs (new enemy types are gameplay, and still open in the
 service manual), the player's claw, explosions.
+
+---
+
+# Graphics pass 2b: Pole Position cars as pixel art
+
+Look only. Footprints stay the same, so collision and the same-size rule are
+untouched, and their tests hold the new drawings to that.
+
+## The sprite
+
+- **One 44x20 rear-view F1 car**, 1982-style: a wide rear wing on pylons,
+  fat rear tyres with tread, sidepods, an engine cover with a stripe, the
+  driver's helmet, exhausts, a tail light and a shadow.
+- **Built from a list of rectangles in map pixels** rather than typed out
+  character by character. At 44 wide that is far less error-prone, and it
+  makes the lean frames easy: shift the upper parts sideways, keep the tyres
+  planted.
+- Each variant is **drawn once into a small offscreen canvas and cached**.
+  Frames are `drawImage`-scaled with smoothing off, so pixels stay crisp; it
+  is switched back on for far-off cars smaller than one screen pixel per
+  sprite pixel, so they do not shimmer.
+
+## Frames and liveries
+
+- **Lean:** straight, leaning left, leaning right. The player's car leans
+  while steering. AI cars lean into curves.
+- **Tread:** two phases, advanced by distance travelled, so the tyres visibly
+  roll at speed and stop when you stop.
+- **Brake lights:** the tail light brightens while the player brakes.
+- **Liveries:** a palette swap per car. The player is red and white; the five
+  AI cars keep their current colours (blue, green, yellow, white, cyan), each
+  with a contrasting stripe.
+
+## Sizes, so nothing else moves
+
+- The player is drawn at 5 screen pixels per sprite pixel: 220 wide, 100 tall,
+  sitting exactly where it does now. `PLAYER_SPRITE` does not change.
+- `CAR_SPRITE_HALF_W` becomes 22 (half the map width). `carSpriteScale()` is
+  already derived from it, so a car level with the player stays exactly as
+  wide as the player.
+- `carBox(x, y, scale)` becomes the one place the AI car's footprint is
+  worked out. `renderCar` draws with it, and the collision tests measure with
+  it, instead of the tests copying renderCar's maths.
+
+## Testing
+
+- The existing collision sweep, same-size and visible-hit tests must stay
+  green with the new drawing.
+- New: every lean/tread/brake variant renders to exactly 44x20; the player's
+  car leans the way it steers; the brake light is lit only while braking. The
+  last two use pixel reads from the cached sprite.
+- Screenshots: the grid, traffic, a hard left with the brakes on.
+
+## Out of scope
+
+The crash effect, the car count, AI behaviour.

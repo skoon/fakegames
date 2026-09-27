@@ -276,14 +276,10 @@ function parkCar(dz, offset) {
 function drawnBox() {
   let box = null;
   const real = renderCar;
-  renderCar = function (x, y, scale, color) {
-    // Same maths as renderCar: body plus the wheels that stick out past it.
-    const carW = Math.max(20, 80 * scale);
-    const wheelW = Math.max(4, carW * 0.15);
-    if (!(y < 0 || y > height || scale <= 0)) {
-      box = { left: x - carW / 2 - wheelW * 0.6, right: x + carW / 2 + wheelW * 0.6, rearY: y };
-    }
-    real(x, y, scale, color);
+  renderCar = function (x, y, scale, color, lean) {
+    // carBox is where renderCar itself gets the sprite's footprint.
+    if (!(y < 0 || y > height || scale <= 0)) box = carBox(x, y, scale);
+    real(x, y, scale, color, lean);
   };
   render();
   renderCar = real;
@@ -413,4 +409,75 @@ suite("poleposition: an AI car level with the player is drawn the same size", fu
     Math.abs(aiWidth - playerWidth) / playerWidth < 0.12,
     "AI " + aiWidth.toFixed(0) + "px vs player " + playerWidth.toFixed(0) + "px"
   );
+});
+
+/* ----------------------------------------------------------- car sprites --- */
+
+function pixelAt(canvas, x, y) {
+  return Array.from(canvas.getContext("2d").getImageData(x, y, 1, 1).data.slice(0, 3)).join(",");
+}
+
+function rgbOf(hex) {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(",");
+}
+
+/** Leftmost column in the sprite that holds the helmet colour. */
+function helmetLeft(canvas) {
+  const want = rgbOf(CAR_COLORS.helmet);
+  for (let x = 0; x < CAR_MAP_W; x++)
+    for (let y = 0; y < CAR_MAP_H; y++) if (pixelAt(canvas, x, y) === want) return x;
+  return -1;
+}
+
+suite("poleposition cars: every variant is a 44x20 sprite", function () {
+  let bad = null;
+  for (const livery of Object.keys(LIVERIES))
+    for (const lean of [-1, 0, 1])
+      for (const tread of [0, 1])
+        for (const brake of [false, true]) {
+          const c = carSprite(livery, lean, tread, brake);
+          if (c.width !== CAR_MAP_W || c.height !== CAR_MAP_H) bad = livery + " " + lean + " " + c.width + "x" + c.height;
+        }
+  check("all variants are the same size", bad === null, bad);
+  check("and that size is 44x20", CAR_MAP_W === 44 && CAR_MAP_H === 20);
+  check("they are cached, not redrawn", carSprite("player", 0, 0, false) === carSprite("player", 0, 0, false));
+});
+
+suite("poleposition cars: the car leans the way you steer", function () {
+  const straight = helmetLeft(carSprite("player", 0, 0, false));
+  check("the helmet is drawn", straight >= 0);
+  check("steering left moves the top of the car left", helmetLeft(carSprite("player", -1, 0, false)) < straight);
+  check("steering right moves it right", helmetLeft(carSprite("player", 1, 0, false)) > straight);
+
+  greenFlag();
+  keyLeft = true; keyRight = false; keySlower = false;
+  check("holding left picks the left lean", playerCarFrame().lean === -1);
+  keyLeft = false; keyRight = true;
+  check("holding right picks the right lean", playerCarFrame().lean === 1);
+  keyRight = false;
+  check("hands off, it sits straight", playerCarFrame().lean === 0);
+});
+
+suite("poleposition cars: brake lights come on only while braking", function () {
+  const [lx, ly] = TAIL_LIGHT;
+  check("off when not braking", pixelAt(carSprite("player", 0, 0, false), lx, ly) === rgbOf(CAR_COLORS.tailLight));
+  check("on when braking", pixelAt(carSprite("player", 0, 0, true), lx, ly) === rgbOf(CAR_COLORS.brakeLight));
+
+  greenFlag();
+  keySlower = true;
+  check("the player's frame follows the brake key", playerCarFrame().brake === true);
+  keySlower = false;
+  check("and lets go", playerCarFrame().brake === false);
+});
+
+suite("poleposition cars: the tyres roll with distance", function () {
+  greenFlag();
+  playerZ = 1000;
+  const a = playerCarFrame().tread;
+  playerZ += TREAD_STEP;
+  const b = playerCarFrame().tread;
+  check("moving one tread step changes the frame", a !== b);
+  check("the two phases look different",
+    pixelAt(carSprite("player", 0, 0, false), 2, 8) !== pixelAt(carSprite("player", 0, 1, false), 2, 8) ||
+    pixelAt(carSprite("player", 0, 0, false), 2, 9) !== pixelAt(carSprite("player", 0, 1, false), 2, 9));
 });
