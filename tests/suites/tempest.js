@@ -463,3 +463,147 @@ suite("tempest: each level moves to the next web", function () {
   check("geometry was rebuilt", laneGeometry.length === numLanes);
   check("the player is on a valid lane", player.lane >= 0 && player.lane < numLanes);
 });
+
+/* ---------------------------------------------------------- enemy art --- */
+
+function spread(lines) {
+  const pts = [].concat(...lines.map((l) => l.points));
+  let best = 0, pair = null;
+  for (let i = 0; i < pts.length; i++)
+    for (let j = i + 1; j < pts.length; j++) {
+      const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+      if (d > best) { best = d; pair = [pts[i], pts[j]]; }
+    }
+  return { size: best, pair: pair };
+}
+
+function flipperAt(lane, depth) {
+  return { lane: lane, depth: depth, type: "flipper", speed: 0, flipTimer: 0, flipDirection: 1 };
+}
+
+suite("tempest art: enemies shrink toward the hub", function () {
+  const now = Arcade.Shell.now();
+  for (const web of WEBS) {
+    useWeb(web.name);
+    let bad = null;
+    for (const type of ["flipper", "tanker", "spiker"]) {
+      for (let lane = 0; lane < numLanes; lane++) {
+        const near = spread(enemyOutline({ ...flipperAt(lane, 0.05), type: type }, now)).size;
+        const far = spread(enemyOutline({ ...flipperAt(lane, 0.95), type: type }, now)).size;
+        if (!(near > far * 2)) bad = type + " lane " + lane + ": " + near.toFixed(1) + " at the rim vs " + far.toFixed(1) + " at the hub";
+      }
+    }
+    check(web.name + ": every enemy is much bigger at the rim than at the hub", bad === null, bad);
+  }
+});
+
+suite("tempest art: a flipper spans its lane edge to edge", function () {
+  const now = Arcade.Shell.now();
+  for (const web of WEBS) {
+    useWeb(web.name);
+    let worst = 0, where = "";
+    for (let lane = 0; lane < numLanes; lane++) {
+      for (const depth of [0, 0.5, 1]) {
+        const edges = laneEdgesAt(lane, depth);
+        const tips = spread(enemyOutline(flipperAt(lane, depth), now)).pair;
+        const d = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+        const miss = Math.min(
+          Math.max(d(tips[0], edges.a), d(tips[1], edges.b)),
+          Math.max(d(tips[0], edges.b), d(tips[1], edges.a))
+        );
+        if (miss > worst) { worst = miss; where = "lane " + lane + " depth " + depth; }
+      }
+    }
+    check(web.name + ": flipper tips land on the lane edges", worst < 0.5, "off by " + worst.toFixed(2) + " at " + where);
+  }
+});
+
+/** Makes one flipper change lane through the real update(), deterministically. */
+function forceFlip(e, direction) {
+  const realRandom = Math.random;
+  Math.random = () => 0; // pass the 1% gate; the new direction does not matter here
+  e.flipTimer = 2001;
+  e.flipDirection = direction;
+  e.speed = 0;
+  try {
+    update(16);
+  } finally {
+    Math.random = realRandom;
+  }
+}
+
+suite("tempest art: the flip is only a picture", function () {
+  useWeb("CIRCLE");
+  Arcade.Input.reset();
+  Arcade.Shell._reset();
+
+  const e = flipperAt(4, 0.5);
+  enemies.push(e);
+  forceFlip(e, 1);
+
+  check("the lane changed at once, as before", e.lane === 5, "lane " + e.lane);
+  check("and a flip is being drawn", !!e.flip, JSON.stringify(e.flip));
+
+  // A shot in the new lane hits it straight away, mid-flip.
+  bullets.length = 0;
+  bullets.push({ lane: 5, depth: 0.5, speed: 0 });
+  const before = enemies.length;
+  update(16);
+  check("a bullet in the new lane hits it mid-flip", enemies.length === before - 1, "left " + enemies.length);
+});
+
+suite("tempest art: the flip ends in the new lane", function () {
+  useWeb("CIRCLE");
+  Arcade.Shell._reset();
+  const e = flipperAt(4, 0.5);
+  enemies.push(e);
+  forceFlip(e, 1);
+
+  const start = e.flip.startedAt;
+  const settled = spread(enemyOutline(flipperAt(5, 0.5), start + 10000));
+  const midway = spread(enemyOutline(e, start + FLIP_MS / 2));
+  const done = spread(enemyOutline(e, start + FLIP_MS + 1));
+
+  const same = (p, q) =>
+    Math.min(
+      Math.hypot(p.pair[0].x - q.pair[0].x, p.pair[0].y - q.pair[0].y) +
+        Math.hypot(p.pair[1].x - q.pair[1].x, p.pair[1].y - q.pair[1].y),
+      Math.hypot(p.pair[0].x - q.pair[1].x, p.pair[0].y - q.pair[1].y) +
+        Math.hypot(p.pair[1].x - q.pair[0].x, p.pair[1].y - q.pair[0].y)
+    ) < 1;
+
+  check("half way through it is somewhere in between", !same(midway, settled));
+  check("once it is over it sits plainly in the new lane", same(done, settled));
+});
+
+suite("tempest art: a pause freezes a flip mid-air", function () {
+  useWeb("CIRCLE");
+  Arcade.Shell._reset();
+  const e = flipperAt(4, 0.5);
+  enemies.push(e);
+  forceFlip(e, 1);
+
+  Arcade.Shell.pause();
+  const frozen = spread(enemyOutline(e, Arcade.Shell.now()));
+  const spinUntil = Date.now() + FLIP_MS + 40;
+  while (Date.now() < spinUntil) {
+    /* burn real time */
+  }
+  const later = spread(enemyOutline(e, Arcade.Shell.now()));
+  Arcade.Shell.resume();
+
+  check("still mid-flip after the pause outlasted it", Math.abs(frozen.size - later.size) < 0.01 && !!e.flip);
+});
+
+suite("tempest art: split flippers flip out of the tanker's lane", function () {
+  useWeb("CIRCLE");
+  Arcade.Shell._reset();
+  bullets.length = 0;
+  enemies.push({ lane: 6, depth: 0.5, type: "tanker", speed: 0, flipTimer: 0, flipDirection: 1 });
+  bullets.push({ lane: 6, depth: 0.5, speed: 0 });
+  update(16);
+
+  const kids = enemies.filter((e) => e.type === "flipper");
+  check("the tanker split", kids.length === 2, "got " + kids.length);
+  check("both children flip out of lane 6", kids.every((k) => k.flip && k.flip.from === 6), JSON.stringify(kids.map((k) => k.flip)));
+});

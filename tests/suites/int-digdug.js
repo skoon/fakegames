@@ -138,3 +138,44 @@ suite("digdug e2e: the title screen waits for a real space", function () {
   keyUp("Space", " ");
   check("a real space starts it", s.awaitingStart === false);
 });
+
+suite("digdug e2e: the mole faces the way it digs", function () {
+  const s = intoPlay();
+  s.player.x = 18 * TILE + TILE / 2;
+  s.player.y = 2 * TILE + TILE / 2;
+  s.player.gridX = 18;
+  s.player.gridY = 2;
+
+  keyDown("ArrowLeft", "ArrowLeft");
+  const frames = new Set();
+  for (let i = 0; i < 16; i++) {
+    s.update(0, 16);
+    frames.add(s.playerSpr.texture.key);
+  }
+  keyUp("ArrowLeft", "ArrowLeft");
+  check("left mirrors the sprite", s.playerSpr.flipX === true);
+  check("and does not rotate it", s.playerSpr.angle === 0, "angle " + s.playerSpr.angle);
+  check("digging animates", frames.size === 2, [...frames].join(","));
+
+  keyDown("ArrowDown", "ArrowDown");
+  s.update(0, 16);
+  keyUp("ArrowDown", "ArrowDown");
+  check("down turns it nose-down", s.playerSpr.angle === 90, "angle " + s.playerSpr.angle);
+});
+
+suite("digdug e2e: digging repaints the ground", function () {
+  const s = intoPlay();
+  check("the terrain is a real texture", game.textures.exists("terrain"));
+
+  // A dirt tile nothing else touches, dug out by hand.
+  const r = 10, c = 2; // left edge: no suite digs out here
+  check("it starts as dirt", s.grid[r][c] === TILE_DIRT);
+  const at = () => Array.from(s.terrainCtx.getImageData(c * TILE + 8, r * TILE + 8, 1, 1).data.slice(0, 3));
+  const before = at();
+
+  s.grid[r][c] = TILE_EMPTY;
+  s.redrawAround(r, c);
+  const after = at();
+  check("the pixel changed when it was dug", before.join() !== after.join(), before + " -> " + after);
+  check("and it is now tunnel dark", after[0] < 60 && after[1] < 60 && after[2] < 60, "" + after);
+});

@@ -374,25 +374,36 @@
       const CAMERA_HEIGHT = 1000;
       const DRAW_DISTANCE = 300;
       const FOG_DENSITY = 5;
-      const PLAYER_WIDTH = 800; // Hitbox width approx
-      const CAR_WIDTH = 800; // AI Car hitbox approx
       const NUM_CARS = 5;
+      const CAMERA_DEPTH = 1 / Math.tan(((FIELD_OF_VIEW / 2) * Math.PI) / 180);
 
-      // Colors
+      // Collision is measured against the pictures, so these describe what
+      // renderPlayer and renderCar actually draw.
+      //
+      // The player's car is fixed on screen, in pixels up from the bottom of
+      // the canvas: `bottom` is where its rear wheels meet the road, `top` its
+      // nose, `halfWidth` half its width across the wheels.
+      const PLAYER_SPRITE = { top: 140, bottom: 40, halfWidth: 110 };
+      // At sprite scale 1, renderCar's body (80 wide) plus the wheels that
+      // stick out past it (0.6 x a 12-wide wheel each side) give this
+      // half-width in pixels.
+      const CAR_SPRITE_HALF_W = 40 + 0.6 * 12;
+      // Roadside scenery keeps its own scale; it has nothing to match.
+      const SCENERY_SCALE = 6000;
+
+      // Colors. Kerbs alternate red and white; grass comes in two stripes.
       const COLORS = {
-        SKY: "#111",
-        TREE: "#327C37",
-        FOG: "#005108",
+        FOG: "#c4dcec",
         LIGHT: {
-          road: "#6B6B6B",
-          grass: "#10AA10",
-          rumble: "#555555",
-          lane: "#CCCCCC",
+          road: "#6e6e72",
+          grass: "#46b03c",
+          rumble: "#f2f2f2",
+          lane: "#eeeeee",
         },
-        DARK: { road: "#696969", grass: "#009A00", rumble: "#BBBBBB" },
-        START: { road: "white", grass: "white", rumble: "white" },
-        FINISH: { road: "black", grass: "black", rumble: "black" },
+        DARK: { road: "#68686c", grass: "#3a9e33", rumble: "#d8231e" },
       };
+      const SKY_TOP = "#2c7bd6";
+      const SKY_HORIZON = "#b9e0fb";
 
       // Game State
       let canvas, ctx;
@@ -462,6 +473,12 @@
       let gameRunning = false;
       let lastTime = 0;
 
+      // How far the backdrop has slid sideways, as a fraction of its width.
+      // Curves push it; each layer moves at its own rate for parallax.
+      let bgOffset = 0;
+      const BG_SLIDE = 0.0012;
+      let backdrop = null;
+
       // Utility Functions
       function easeIn(a, b, percent) {
         return a + (b - a) * Math.pow(percent, 2);
@@ -510,13 +527,79 @@
         p.screen.w = Math.round((p.screen.scale * roadWidth * width) / 2);
       }
 
-      function overlap(x1, w1, x2, w2, percent) {
-        let half = percent || 1;
-        let min1 = x1 - w1 * half;
-        let max1 = x1 + w1 * half;
-        let min2 = x2 - w2 * half;
-        let max2 = x2 + w2 * half;
-        return !(max1 < min2 || min1 > max2);
+      /* ------------------------------------------------------ collision ---
+       *
+       * The camera is not where the player's car is. The car is drawn near the
+       * bottom of the screen, about a thousand units up the road from the
+       * camera, so every distance here is measured from there. The old check
+       * measured from the camera, which meant you hit cars once they had
+       * already slid out of the bottom of the view.
+       *
+       * Known ceiling: depths are worked out for flat road. On the crest of
+       * the one hill they are slightly off.
+       */
+
+      /** How far up the road a point on flat ground must be to land on row y. */
+      function depthAtScreenY(y) {
+        return (CAMERA_DEPTH * CAMERA_HEIGHT * (height / 2)) / (y - height / 2);
+      }
+
+      /** Screen pixels per road unit (half the road's width) at depth z. */
+      function roadUnitPx(z) {
+        return (CAMERA_DEPTH / z) * ROAD_WIDTH * (width / 2);
+      }
+
+      function playerRearZ() {
+        return depthAtScreenY(height - PLAYER_SPRITE.bottom);
+      }
+
+      /**
+       * AI cars are drawn at projected scale x this. It is chosen so a car
+       * level with the player's rear wheels is exactly as wide as the
+       * player's car, so the whole field is the same size.
+       */
+      function carSpriteScale() {
+        return (PLAYER_SPRITE.halfWidth * playerRearZ()) / (CAR_SPRITE_HALF_W * CAMERA_DEPTH);
+      }
+
+      /** Nose to tail, in road depth. AI cars are treated as the same length. */
+      function carLength() {
+        return depthAtScreenY(height - PLAYER_SPRITE.top) - playerRearZ();
+      }
+
+      /** Distance from the player's rear wheels to where a car is drawn. */
+      function gapTo(car) {
+        const track = segments.length * SEGMENT_LENGTH;
+        // render() draws a car at the middle of its segment, so measure that.
+        const drawnZ = Math.floor(car.z / SEGMENT_LENGTH) * SEGMENT_LENGTH + SEGMENT_LENGTH / 2;
+        let gap = (drawnZ - (playerZ + playerRearZ())) % track;
+        if (gap > track / 2) gap -= track;
+        if (gap < -track / 2) gap += track;
+        return gap;
+      }
+
+      /**
+       * Whether the two cars overlap sideways, judged at the depth the other
+       * car is drawn. The player's sprite does not scale with depth, so its
+       * width in road units depends on where you measure it.
+       */
+      function sideBySide(car, gap) {
+        const depth = playerRearZ() + Math.max(0, gap);
+        const reach =
+          PLAYER_SPRITE.halfWidth / roadUnitPx(depth) +
+          (CAR_SPRITE_HALF_W * carSpriteScale()) / (ROAD_WIDTH * (width / 2));
+        return Math.abs(playerX - car.offset) < reach;
+      }
+
+      function collides(car) {
+        const gap = gapTo(car);
+        return Math.abs(gap) < carLength() && sideBySide(car, gap);
+      }
+
+      /** A long frame can carry the player from clear ahead to clear behind. */
+      function passedThrough(car, gapBefore) {
+        const length = carLength();
+        return gapBefore >= length && gapTo(car) <= -length && sideBySide(car, 0);
       }
 
       function init() {
@@ -551,6 +634,7 @@
           },
           curve: curve,
           cars: [],
+          sprites: [],
           color: Math.floor(n / RUMBLE_LENGTH) % 2 ? COLORS.DARK : COLORS.LIGHT,
         });
       }
@@ -581,7 +665,11 @@
 
           addSegment(curve, y);
         }
-        segments[NUM_SEGMENTS - 1].color = COLORS.FINISH;
+        // The lap counts when the camera wraps, and at that moment the
+        // player's car is sitting on this segment - so that is where the
+        // line goes. It is also where the car starts the race.
+        segments[Math.floor(playerRearZ() / SEGMENT_LENGTH)].checker = true;
+        placeScenery();
 
         cars = [];
         for (let i = 0; i < NUM_CARS; i++) {
@@ -775,6 +863,8 @@
         }
 
         let playerSegment = findSegment(playerZ);
+        const gapsBefore = cars.map(gapTo);
+        bgOffset += playerSegment.curve * ((speed * dt) / SEGMENT_LENGTH) * BG_SLIDE;
 
         for (let n = 0; n < cars.length; n++) {
           let car = cars[n];
@@ -788,18 +878,6 @@
             let index = oldSegment.cars.indexOf(car);
             oldSegment.cars.splice(index, 1);
             newSegment.cars.push(car);
-          }
-
-          if (!isCrashed) {
-            if (
-              playerZ > car.z - SEGMENT_LENGTH &&
-              playerZ < car.z + SEGMENT_LENGTH
-            ) {
-              // Reduced hitbox width from 0.8 to 0.4 for tighter collision
-              if (overlap(playerX, 0.4, car.offset, 0.4, 1.0)) {
-                crash(car);
-              }
-            }
           }
         }
 
@@ -864,6 +942,17 @@
           }
         }
 
+        // Both the cars and the player have moved, so this frame's positions
+        // are the ones on screen.
+        if (!isCrashed && !raceFinished) {
+          for (let n = 0; n < cars.length; n++) {
+            if (collides(cars[n]) || passedThrough(cars[n], gapsBefore[n])) {
+              crash(cars[n]);
+              break;
+            }
+          }
+        }
+
         updateHud();
       }
 
@@ -884,11 +973,7 @@
       function render() {
         ctx.clearRect(0, 0, width, height);
 
-        ctx.fillStyle = "#0a3a41";
-        ctx.fillRect(0, 0, width, height);
-
-        ctx.fillStyle = "#003300";
-        ctx.fillRect(0, height / 2, width, height / 2);
+        renderBackdrop();
 
         if (!gameRunning) return;
 
@@ -899,7 +984,7 @@
         let x = 0;
         let maxY = height; // Clipping buffer: anything below this Y is already drawn
 
-        const cameraDepth = 1 / Math.tan(((FIELD_OF_VIEW / 2) * Math.PI) / 180);
+        const cameraDepth = CAMERA_DEPTH;
         let playerY = interpolate(
           baseSegment.p1.world.y,
           baseSegment.p2.world.y,
@@ -961,7 +1046,7 @@
           if (segment.p2.screen.y >= maxY) continue;
 
           // If the segment is visible, draw it.
-          renderSegment(segment);
+          renderSegment(segment, n);
 
           // Update Horizon to the new top-most edge
           maxY = segment.p2.screen.y;
@@ -989,16 +1074,32 @@
             carsToDraw.push({
               x: spriteX,
               y: spriteY,
-              scale: spriteScale * 6000,
+              scale: spriteScale * carSpriteScale(),
               color: car.color,
             });
           }
+
+          // Roadside scenery goes in the same list, so it sorts with the cars.
+          const sceneryScale = interpolate(segment.p1.screen.scale, segment.p2.screen.scale, 0.5);
+          if (sceneryScale > 0) {
+            for (const item of segment.sprites) {
+              carsToDraw.push({
+                x:
+                  interpolate(segment.p1.screen.x, segment.p2.screen.x, 0.5) +
+                  (sceneryScale * item.offset * ROAD_WIDTH * width) / 2,
+                y: interpolate(segment.p1.screen.y, segment.p2.screen.y, 0.5),
+                scale: sceneryScale * SCENERY_SCALE,
+                scenery: item,
+              });
+            }
+          }
         }
 
-        // Render cars back-to-front (furthest first)
+        // Render cars and scenery back-to-front (furthest first)
         for (let i = carsToDraw.length - 1; i >= 0; i--) {
           let c = carsToDraw[i];
-          renderCar(c.x, c.y, c.scale, c.color);
+          if (c.scenery) renderScenery(c.scenery, c.x, c.y, c.scale);
+          else renderCar(c.x, c.y, c.scale, c.color);
         }
 
         if (!isCrashed || Math.floor(Date.now() / 200) % 2 == 0) {
@@ -1021,7 +1122,7 @@
         }
       }
 
-      function renderSegment(segment) {
+      function renderSegment(segment, n) {
         let x1 = segment.p1.screen.x;
         let y1 = segment.p1.screen.y;
         let w1 = segment.p1.screen.w;
@@ -1091,6 +1192,38 @@
             );
             laneX1 += laneW1;
             laneX2 += laneW2;
+          }
+        }
+
+        if (segment.checker) renderChequers(x1, y1, w1, x2, y2, w2);
+
+        // Haze thickens with distance and pales everything toward the sky.
+        const haze = 1 - Math.exp(-Math.pow(n / DRAW_DISTANCE, 2) * FOG_DENSITY);
+        if (haze > 0.02) {
+          ctx.globalAlpha = haze;
+          ctx.fillStyle = COLORS.FOG;
+          ctx.fillRect(0, y2, width, y1 - y2);
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      /** A two-row chequered band right across the road. */
+      function renderChequers(x1, y1, w1, x2, y2, w2) {
+        const COLS = 10;
+        for (let row = 0; row < 2; row++) {
+          const ta = row / 2, tb = (row + 1) / 2;
+          const ya = interpolate(y1, y2, ta), yb = interpolate(y1, y2, tb);
+          const xa = interpolate(x1, x2, ta), xb = interpolate(x1, x2, tb);
+          const wa = interpolate(w1, w2, ta), wb = interpolate(w1, w2, tb);
+          for (let col = 0; col < COLS; col++) {
+            const fa = col / COLS, fb = (col + 1) / COLS;
+            renderPolygon(
+              xa - wa + 2 * wa * fa, ya,
+              xa - wa + 2 * wa * fb, ya,
+              xb - wb + 2 * wb * fb, yb,
+              xb - wb + 2 * wb * fa, yb,
+              (row + col) % 2 ? "#111111" : "#f4f4f4"
+            );
           }
         }
       }
@@ -1187,6 +1320,210 @@
         ctx.beginPath();
         ctx.arc(carX, carY + 20, 14, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      /* ------------------------------------------------------- scenery --- */
+
+      /** Deterministic 0..1 noise, so the track looks the same every race. */
+      function hash(a, b) {
+        let h = Math.imul(a, 374761393) + Math.imul(b, 668265263);
+        h = Math.imul(h ^ (h >>> 13), 1274126177);
+        return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+      }
+
+      // Invented names only: these are billboards in a fake race.
+      const BILLBOARDS = [
+        { text: "ARCADE ZERO", panel: "#1b3fa0", ink: "#ffe14a" },
+        { text: "TURBO OIL", panel: "#e8e8e8", ink: "#d8231e" },
+        { text: "INSERT COIN", panel: "#d8231e", ink: "#ffffff" },
+        { text: "FAKE COLA", panel: "#ffd21e", ink: "#1b1b1b" },
+      ];
+
+      /**
+       * Scenery sits well off the tarmac: the kerb ends at about 1.17 road
+       * units from the centre. It is decoration only; nothing collides with it.
+       */
+      function placeScenery() {
+        const lineSeg = Math.floor(playerRearZ() / SEGMENT_LENGTH);
+        for (const seg of segments) {
+          const n = seg.index;
+          if (Math.abs(n - lineSeg) < 6) continue; // keep the grid clear
+          const side = hash(n, 1) < 0.5 ? -1 : 1;
+
+          if (n % 40 === 20) {
+            seg.sprites.push({ kind: "billboard", offset: side * 2.1, board: BILLBOARDS[(n / 40 | 0) % BILLBOARDS.length] });
+          } else if (n % 16 === 0) {
+            seg.sprites.push({ kind: "lamp", offset: -1.3 }, { kind: "lamp", offset: 1.3 });
+          } else if (hash(n, 7) < 0.22) {
+            seg.sprites.push({ kind: "tree", offset: side * (1.8 + hash(n, 3) * 1.8), size: 0.8 + hash(n, 5) * 0.5 });
+          }
+        }
+      }
+
+      /** Draws one piece of scenery standing on the road at (x, y), s = scale. */
+      function renderScenery(item, x, y, s) {
+        if (y < 0 || y > height || s < 0.02) return;
+
+        if (item.kind === "tree") {
+          const k = s * item.size;
+          ctx.fillStyle = "rgba(0,0,0,0.25)";
+          ctx.fillRect(x - 40 * k, y - 6 * k, 80 * k, 8 * k);
+          ctx.fillStyle = "#6b4526";
+          ctx.fillRect(x - 7 * k, y - 50 * k, 14 * k, 50 * k);
+          // Three stacked tiers of pine, lighter on the sunny side.
+          for (let t = 0; t < 3; t++) {
+            const base = y - 36 * k - t * 34 * k;
+            const half = (58 - t * 14) * k;
+            ctx.fillStyle = "#1f6b2a";
+            ctx.beginPath();
+            ctx.moveTo(x - half, base);
+            ctx.lineTo(x + half, base);
+            ctx.lineTo(x, base - 62 * k);
+            ctx.fill();
+            ctx.fillStyle = "#2f8a36";
+            ctx.beginPath();
+            ctx.moveTo(x - half, base);
+            ctx.lineTo(x - half * 0.1, base);
+            ctx.lineTo(x, base - 62 * k);
+            ctx.fill();
+          }
+          return;
+        }
+
+        if (item.kind === "lamp") {
+          const toward = item.offset < 0 ? 1 : -1; // arm leans over the road
+          ctx.fillStyle = "#9aa0a8";
+          ctx.fillRect(x - 3 * s, y - 230 * s, 6 * s, 230 * s);
+          ctx.fillRect(x, y - 230 * s, toward * 60 * s, 5 * s);
+          ctx.fillStyle = "#fff6c0";
+          ctx.fillRect(x + toward * 50 * s - 8 * s, y - 226 * s, 16 * s, 6 * s);
+          return;
+        }
+
+        if (item.kind === "billboard") {
+          const b = item.board;
+          const w = 240 * s, h = 90 * s, legs = 70 * s;
+          ctx.fillStyle = "#5a5a5e";
+          ctx.fillRect(x - w * 0.35, y - legs, 8 * s, legs);
+          ctx.fillRect(x + w * 0.35 - 8 * s, y - legs, 8 * s, legs);
+          ctx.fillStyle = "#2a2a2e";
+          ctx.fillRect(x - w / 2 - 4 * s, y - legs - h - 4 * s, w + 8 * s, h + 8 * s);
+          ctx.fillStyle = b.panel;
+          ctx.fillRect(x - w / 2, y - legs - h, w, h);
+          if (h > 7) {
+            ctx.fillStyle = b.ink;
+            ctx.font = "bold " + Math.round(h * 0.42) + "px 'Press Start 2P', monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(b.text, x, y - legs - h / 2, w * 0.9);
+            ctx.textAlign = "left";
+            ctx.textBaseline = "alphabetic";
+          }
+        }
+      }
+
+      /* ------------------------------------------------------ backdrop --- */
+
+      /**
+       * Sky, clouds, a snow-capped range and a nearer line of hills, drawn
+       * once into canvases twice the screen's width so they can wrap as they
+       * slide. The profiles are sums of whole-cycle sines, so they tile.
+       */
+      function buildBackdrop() {
+        const W = width * 2;
+        const H = height / 2;
+        const layer = () => {
+          const c = document.createElement("canvas");
+          c.width = W;
+          c.height = H;
+          return c;
+        };
+        const ridge = (x, waves) =>
+          waves.reduce((sum, [k, amp, phase]) => sum + amp * Math.sin((2 * Math.PI * k * x) / W + phase), 0);
+
+        // Mountains: blue-grey, lit from the left, snow above the snowline.
+        const mountains = layer();
+        let g = mountains.getContext("2d");
+        const peaks = [[3, 38, 0.4], [5, 30, 1.9], [8, 18, 2.7], [13, 9, 0.8], [21, 4, 1.3]];
+        for (let x = 0; x < W; x++) {
+          const top = H - 110 - ridge(x, peaks);
+          const slope = ridge(x + 1, peaks) - ridge(x, peaks);
+          g.fillStyle = slope > 0 ? "#7d93b4" : "#627899";
+          g.fillRect(x, top, 1, H - top);
+          const snowline = H - 150;
+          if (top < snowline) {
+            // Ragged lower edge, so the snow does not end on a ruled line.
+            const depth = Math.min(snowline - top, 24) + 3 + 7 * hash(x >> 2, 5);
+            g.fillStyle = slope > 0 ? "#ffffff" : "#d6e2f0";
+            g.fillRect(x, top, 1, depth);
+          }
+        }
+
+        // Hills: nearer, greener, with little tree bumps along the ridge.
+        const hills = layer();
+        g = hills.getContext("2d");
+        const rolls = [[2, 14, 1.1], [5, 9, 0.3], [9, 5, 2.2]];
+        for (let x = 0; x < W; x++) {
+          const bump = hash(Math.floor(x / 9), 11) < 0.5 ? 4 * Math.sin(((x % 9) / 9) * Math.PI) : 0;
+          const top = H - 38 - ridge(x, rolls) - bump;
+          g.fillStyle = bump > 0 ? "#2f7d34" : "#3b8f3a";
+          g.fillRect(x, top, 1, H - top);
+        }
+
+        // Clouds: clusters of overlapping puffs, shaded underneath.
+        const clouds = layer();
+        g = clouds.getContext("2d");
+        for (let i = 0; i < 6; i++) {
+          const cx = (i + hash(i, 21) * 0.6) * (W / 6), cy = 24 + hash(i, 22) * (H * 0.28);
+          const size = 12 + hash(i, 23) * 16;
+          for (let p = 0; p < 6; p++) {
+            const px = cx + (p - 2.5) * size * 0.7, py = cy + (p % 2) * size * 0.25;
+            g.fillStyle = "#dfeaf4";
+            g.beginPath();
+            g.arc(px, py + size * 0.18, size * 0.62, 0, Math.PI * 2);
+            g.fill();
+            g.fillStyle = "#ffffff";
+            g.beginPath();
+            g.arc(px, py, size * 0.6, 0, Math.PI * 2);
+            g.fill();
+          }
+        }
+
+        return { mountains, hills, clouds };
+      }
+
+      function renderLayer(canvas, rate) {
+        const W = canvas.width;
+        const shift = (((bgOffset * rate * W) % W) + W) % W;
+        ctx.drawImage(canvas, -shift, 0);
+        ctx.drawImage(canvas, W - shift, 0);
+      }
+
+      function renderBackdrop() {
+        if (!backdrop) backdrop = buildBackdrop();
+        const horizon = height / 2;
+
+        const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+        sky.addColorStop(0, SKY_TOP);
+        sky.addColorStop(1, SKY_HORIZON);
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, width, horizon);
+
+        renderLayer(backdrop.clouds, 0.25);
+        renderLayer(backdrop.mountains, 0.5);
+
+        // Haze where the mountains meet the horizon.
+        const haze = ctx.createLinearGradient(0, horizon - 70, 0, horizon);
+        haze.addColorStop(0, "rgba(196, 220, 236, 0)");
+        haze.addColorStop(1, "rgba(196, 220, 236, 0.85)");
+        ctx.fillStyle = haze;
+        ctx.fillRect(0, horizon - 70, width, 70);
+
+        renderLayer(backdrop.hills, 1);
+
+        // Ground below the horizon; the road segments paint over it.
+        ctx.fillStyle = COLORS.LIGHT.grass;
+        ctx.fillRect(0, horizon, width, height - horizon);
       }
 
       // --- AUDIO SYSTEM ---

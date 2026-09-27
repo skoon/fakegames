@@ -240,3 +240,58 @@ refuses body and html outright, with a test.
 - Per-cabinet items from the service manual: Pole Position's roadside scenery
   and fog, Spy Hunter's road curves and enemy archetypes, Tempest's pulsars and
   fuseballs, Dig Dug's authored stage layouts, Space Invaders' attract mode.
+
+## Graphics passes (implementation_plan.md, passes 1-3)
+
+### Pass 1 - Dig Dug garden
+- [x] Test: no rock falls at level start (fails first)
+- [x] Fix top rock rows
+- [x] pixelTexture helper + mole, grub, fire ant, flame, boulder, veg set
+- [x] Soil bands, tunnel rims, sky/grass, bedrock
+- [x] Mole faces direction + dig frames; hose pump; pop/score feedback
+- [x] Container fills window; title screen with sprites
+- [x] Suites green, screenshots checked
+
+### Pass 2 - Pole Position
+- [x] Tests: collision matches drawing, visible hit, no tunnelling (fail first)
+- [x] Collision fix
+- [x] Sky, mountains with parallax, haze, kerbs, grass stripes, start line
+- [x] Roadside scenery sorted with cars
+- [x] Suites green, screenshots checked
+
+### Pass 3 - Tempest enemies
+- [x] Tests: perspective, lane fit, flip is cosmetic (fail first)
+- [x] laneEdgesAt + lane-space drawing for flipper, tanker, spiker
+- [x] Flip animation on lane change and tanker split
+- [x] Suites green, screenshots checked
+
+### Graphics passes 1-3 done
+
+All suites green. Verified by screenshot as well as by test: title, play,
+game over (Dig Dug); start line, curve, hill, traffic (Pole Position); circle,
+star, flat webs and a mid-flip frame (Tempest).
+
+- **Dig Dug** is a garden: pixel-map sprites (mole, grub, fire ant, flame,
+  six vegetables), a canvas-texture ground with four soil layers and shaded
+  tunnels, boulders as single sprites, a hose, pops and floating scores. The
+  window-filling scale fix was `#game-container` having no size.
+  Gameplay change, as approved: the top two rocks moved up a row so they no
+  longer fall at level start and hand out the veg bonus.
+- **Pole Position** collision now matches the pictures: distances from where
+  the player's car is drawn rather than the camera, widths from the drawing
+  code, checked after everything moves, with a guard against tunnelling. The
+  test sweeps cars across the road and compares drawn contact with crashes.
+  New backdrop with parallax, haze, kerbs, chequered line, roadside scenery.
+- **Tempest** enemies are drawn in lane space with perspective, as the 1981
+  shapes, and flippers cartwheel over the rail when they change lanes.
+
+Noticed, not actioned:
+- Dig Dug sprites are still 16px against 16px tiles, so they are small on a
+  big screen. Drawing them larger would overlap the tunnel walls.
+- [x] Pole Position's AI cars were drawn about 2.4x the player's width at the
+  same depth. Fixed on request: their scale is now derived from the two
+  drawing functions so a car level with the player is exactly as wide.
+  Collision widths come from the same drawing, so they shrank with it.
+  Scenery has its own scale and is unchanged.
+- Test-only: a suite that types "P" as an initial also pauses the game,
+  because tests dispatch keys at window. `greenFlag()` now resets the shell.

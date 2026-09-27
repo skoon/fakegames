@@ -5,7 +5,7 @@
 }
 
 body {
-    background: #111;
+    background: #120c08;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -13,6 +13,9 @@ body {
     overflow: hidden;
 }
 
+/* Phaser's Scale.FIT sizes the canvas to this box, so it needs a size of its
+   own - without one the game stays at 576x448 in the middle of the window. */
 #game-container {
-    border: 2px solid #333;
+    width: 100vw;
+    height: 100vh;
 }

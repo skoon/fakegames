@@ -113,7 +113,17 @@ window.Phaser = {
       };
       this.tweens = { add: (cfg) => { if (cfg && cfg.onComplete) cfg.onComplete(); } };
       this.scene = { restart: () => {} };
-      this.textures = { addCanvas: () => {} };
+      this.textures = {
+        addCanvas: () => {},
+        exists: () => false,
+        // A real 2D canvas underneath, so terrain painting actually runs.
+        createCanvas: (key, w, h) => {
+          const c = document.createElement("canvas");
+          c.width = w;
+          c.height = h;
+          return { getContext: () => c.getContext("2d"), refresh: () => {} };
+        },
+      };
     }
   },
 };

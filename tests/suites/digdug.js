@@ -269,3 +269,68 @@ suite("digdug: the vegetable is worth more on later levels", function () {
   check("later levels pay more", later.vegetable.points > earlyWorth,
         later.vegetable.points + " vs " + earlyWorth);
 });
+
+/* ------------------------------------------------------- level layout --- */
+
+suite("digdug: rocks stay put until you dig under them", function () {
+  const scene = freshScene();
+  const before = scene.rocks.map((r) => JSON.stringify(r.tiles));
+
+  // Plenty of frames for anything unsupported to fall and land.
+  for (let i = 0; i < 40; i++) scene.updateRocks(16);
+
+  const moved = scene.rocks.filter((r, i) => JSON.stringify(r.tiles) !== before[i]);
+  check("no rock falls on its own at level start", moved.length === 0,
+        moved.length + " fell, e.g. from " + (moved[0] ? before[scene.rocks.indexOf(moved[0])] : ""));
+  check("so no rock has counted toward the veg bonus", scene.rocksLanded === 0,
+        "rocksLanded " + scene.rocksLanded);
+  check("and there is no free veg", scene.vegetable === null);
+});
+
+/* ---------------------------------------------------------------- art --- */
+
+suite("digdug art: every sprite map is well formed", function () {
+  const names = Object.keys(SPRITES);
+  check("there are sprite maps", names.length > 0);
+
+  for (const name of names) {
+    const art = SPRITES[name];
+    const width = art.rows[0].length;
+    const ragged = art.rows.findIndex((row) => row.length !== width);
+    check(name + " rows are all the same width", ragged === -1, "row " + ragged);
+
+    const unknown = art.rows.join("").split("").filter((ch) => ch !== "." && !(ch in art.palette));
+    check(name + " uses only its own palette", unknown.length === 0, "stray: " + unknown.join(""));
+  }
+});
+
+suite("digdug art: soil gets deeper as you dig down", function () {
+  let lastBand = -1;
+  let monotone = true;
+  const seen = new Set();
+  for (let row = 1; row < ROWS - 1; row++) {
+    const band = soilBand(row);
+    if (band < lastBand) monotone = false;
+    lastBand = band;
+    seen.add(band);
+  }
+  check("bands never go back up", monotone);
+  check("four distinct layers", seen.size === 4, "saw " + seen.size);
+  check("topsoil at the top", soilBand(1) === 0);
+  check("subsoil at the bottom", soilBand(ROWS - 2) === 3);
+});
+
+suite("digdug art: the veg bonus changes with the level", function () {
+  check("one veg per points step", VEG_KINDS.length === VEGETABLE_POINTS.length);
+  check("no veg repeats", new Set(VEG_KINDS).size === VEG_KINDS.length);
+
+  const kindAt = (level) => {
+    const scene = freshScene();
+    scene.level = level;
+    scene.spawnVegetable();
+    return scene.vegetable.kind;
+  };
+  check("level 1 is a carrot", kindAt(1) === "carrot", kindAt(1));
+  check("level 2 is something else", kindAt(2) !== kindAt(1));
+  check("past the list it stays on the last one", kindAt(40) === VEG_KINDS[VEG_KINDS.length - 1]);
+});

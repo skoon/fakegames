@@ -12,8 +12,16 @@ function blockHighScore() {
   for (let i = 0; i < 5; i++) Arcade.Scores.submit("poleposition", "ZZZ", 9999999);
 }
 
-/** Starts a race and skips the grid countdown. */
+/**
+ * Starts a race and skips the grid countdown.
+ *
+ * Also unpauses: suites dispatch keys straight at window, where the initials
+ * prompt cannot stop the shell seeing them, so typing "P" as an initial pauses
+ * the game for every suite after it. A real keypress targets the page and is
+ * stopped in the capture phase, so this is a test-only leak.
+ */
 function greenFlag() {
+  Arcade.Shell._reset();
   blockHighScore();
   startGame();
   countdownActive = false;
@@ -250,4 +258,159 @@ suite("poleposition: restarting resets the clock and the score", function () {
   check("lap counter is back to one", playerLap === 1);
   check("the low warning is cleared",
         document.getElementById("raceClock").classList.contains("low") === false);
+});
+
+/* ------------------------------------------------------------ collision --- */
+
+/** Clears traffic and parks one car `dz` ahead of the camera at `offset`. */
+function parkCar(dz, offset) {
+  for (const seg of segments) seg.cars.length = 0;
+  cars.length = 0;
+  const car = { offset: offset, z: playerZ + dz, speed: 0, color: "#00FFFF" };
+  cars.push(car);
+  findSegment(car.z).cars.push(car);
+  return car;
+}
+
+/** Renders one frame and returns the box renderCar drew for the (only) car. */
+function drawnBox() {
+  let box = null;
+  const real = renderCar;
+  renderCar = function (x, y, scale, color) {
+    // Same maths as renderCar: body plus the wheels that stick out past it.
+    const carW = Math.max(20, 80 * scale);
+    const wheelW = Math.max(4, carW * 0.15);
+    if (!(y < 0 || y > height || scale <= 0)) {
+      box = { left: x - carW / 2 - wheelW * 0.6, right: x + carW / 2 + wheelW * 0.6, rearY: y };
+    }
+    real(x, y, scale, color);
+  };
+  render();
+  renderCar = real;
+  return box;
+}
+
+const PLAYER_BOX = () => ({
+  left: width / 2 - PLAYER_SPRITE.halfWidth,
+  right: width / 2 + PLAYER_SPRITE.halfWidth,
+  topY: height - PLAYER_SPRITE.top,
+  rearY: height - PLAYER_SPRITE.bottom,
+});
+
+suite("poleposition: you only hit a car you can see", function () {
+  greenFlag();
+  playerZ = 50 * SEGMENT_LENGTH;
+  playerX = 0;
+
+  // A parked car straight ahead, well up the road. Drive into it.
+  parkCar(3000, 0);
+  let crashedAt = null;
+  for (let i = 0; i < 400 && !isCrashed; i++) {
+    const box = drawnBox(); // what was on screen going into this frame
+    speed = 3000;
+    update(1 / 60);
+    if (isCrashed) crashedAt = box;
+  }
+
+  check("the crash happened", isCrashed === true);
+  check("the car was on screen when it hit", crashedAt !== null, "it had already left the bottom of the view");
+  const p = PLAYER_BOX();
+  check(
+    "its back had reached the nose of the player's car",
+    crashedAt !== null && crashedAt.rearY >= p.topY - 12,
+    crashedAt ? "rear at y " + Math.round(crashedAt.rearY) + ", nose at y " + p.topY : ""
+  );
+});
+
+suite("poleposition: collision matches what is drawn", function () {
+  greenFlag();
+  playerZ = 50 * SEGMENT_LENGTH;
+  playerX = 0;
+  const p = PLAYER_BOX();
+
+  const mismatches = [];
+  let touching = 0;
+  let clear = 0;
+
+  // Cars from well up the road down to level with the player, across the road.
+  for (let seg = 3; seg <= 9; seg++) {
+    for (let offset = -1.2; offset <= 1.2001; offset += 0.05) {
+      parkCar(seg * SEGMENT_LENGTH + SEGMENT_LENGTH / 2, offset);
+      const box = drawnBox();
+      if (!box || box.rearY > p.rearY) continue; // only cars at or ahead of the player
+
+      const overlapX = Math.min(box.right, p.right) - Math.max(box.left, p.left);
+      const overlapY = box.rearY - p.topY;
+      // Too close to the edge to call either way from pixels.
+      if (Math.abs(overlapX) < 6 || Math.abs(overlapY) < 6) continue;
+
+      const looksLikeContact = overlapX > 0 && overlapY > 0;
+      const gameSaysCrash = collides(cars[0]);
+      if (looksLikeContact) touching++;
+      else clear++;
+      if (looksLikeContact !== gameSaysCrash) {
+        mismatches.push(
+          "offset " + offset.toFixed(2) + " seg " + seg + ": " +
+          (looksLikeContact ? "touching but no crash" : "crash with a gap")
+        );
+      }
+    }
+  }
+
+  check("the sweep saw both touching and clear cars", touching > 5 && clear > 5, touching + " touching, " + clear + " clear");
+  check(
+    "every drawn contact is a crash, and every gap is not",
+    mismatches.length === 0,
+    mismatches.length + " disagree, e.g. " + mismatches.slice(0, 3).join(" | ")
+  );
+});
+
+suite("poleposition: a fast frame cannot drive straight through a car", function () {
+  greenFlag();
+  playerZ = 50 * SEGMENT_LENGTH;
+  playerX = 0;
+  parkCar(1800, 0);
+
+  // One long frame at top speed: the player ends up well past the car.
+  speed = maxSpeed;
+  keyFaster = true;
+  update(0.5);
+
+  check("it still counts as a crash", isCrashed === true);
+});
+
+suite("poleposition: a car in the next lane is not a crash", function () {
+  greenFlag();
+  playerZ = 50 * SEGMENT_LENGTH;
+  playerX = 0;
+  // Level with the player, one lane across: close, but clearly not touching.
+  parkCar(5 * SEGMENT_LENGTH + SEGMENT_LENGTH / 2, 0.66);
+  speed = 0;
+  update(1 / 60);
+  check("no crash", isCrashed === false);
+});
+
+suite("poleposition: an AI car level with the player is drawn the same size", function () {
+  greenFlag();
+  playerZ = 50 * SEGMENT_LENGTH;
+  playerX = 0;
+
+  // Put a car's rear wheels exactly where the player's are, one lane over so
+  // it is not a crash, and measure both.
+  const car = parkCar(0, 0.9);
+  const rear = playerZ + playerRearZ();
+  car.z = rear - SEGMENT_LENGTH / 2; // renderCar draws at its segment's middle
+  findSegment(car.z).cars.push(car);
+  for (const seg of segments) if (seg !== findSegment(car.z)) seg.cars.length = 0;
+
+  const box = drawnBox();
+  const p = PLAYER_BOX();
+  check("the car was drawn", box !== null);
+  const aiWidth = box.right - box.left;
+  const playerWidth = p.right - p.left;
+  check(
+    "same width across the wheels, within a segment's worth of depth",
+    Math.abs(aiWidth - playerWidth) / playerWidth < 0.12,
+    "AI " + aiWidth.toFixed(0) + "px vs player " + playerWidth.toFixed(0) + "px"
+  );
 });
