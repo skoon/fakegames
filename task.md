@@ -233,8 +233,10 @@ refuses body and html outright, with a test.
 ## Still open
 
 - Touch controls — deferred by decision, not done.
-- Breakout still loads Tailwind from a CDN, so it is the one cabinet that needs
-  the network to look right. Same class of problem as the Phaser CDN.
+- [x] Breakout's Tailwind CDN: gone. The dozen utility classes it used are now
+  named classes in the page's own `<style>`, plus the two bits of Tailwind's
+  reset it relied on (border-box sizing, zero margins in the overlays).
+  Screenshots with the network blocked match the Tailwind version.
 - Per-cabinet items from the service manual: Pole Position's roadside scenery
   and fog, Spy Hunter's road curves and enemy archetypes, Tempest's pulsars and
   fuseballs, Dig Dug's authored stage layouts, Space Invaders' attract mode.

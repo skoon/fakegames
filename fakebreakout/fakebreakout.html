@@ -4,8 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Breakout Clone</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+      :root {
+        --ink-strong: #ffffff;
+        --ink: #d1d5db;
+        --ink-dim: #9ca3af;
+        --accent: #3b82f6;
+        --accent-soft: #60a5fa;
+        --gold: #facc15;
+        line-height: 1.5;
+      }
+
       body {
         background-color: #0f172a;
         color: white;
@@ -67,7 +76,85 @@
         padding: 20px;
       }
 
+      /* What Tailwind's reset used to supply. :where() keeps the margin reset
+         at zero specificity so the classes below can set their own. */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      :where(.overlay) :where(h1, p, pre) {
+        margin: 0;
+      }
+
+      .title {
+        font-size: 3rem;
+        line-height: 1;
+        font-weight: 900;
+        font-style: italic;
+        color: var(--accent);
+        margin-bottom: 1.5rem;
+      }
+
+      .end-title {
+        font-size: 2.25rem;
+        line-height: 2.5rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+      }
+
+      .final-score {
+        font-size: 1.25rem;
+        line-height: 1.75rem;
+        color: var(--ink-dim);
+      }
+
+      .help {
+        color: var(--ink);
+      }
+
+      .help > * + * {
+        margin-top: 0.5rem;
+      }
+
+      .help b {
+        color: var(--ink-strong);
+      }
+
+      .help .small {
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+        color: var(--ink-dim);
+      }
+
+      .high-scores {
+        margin-top: 1rem;
+        font-family: ui-monospace, Consolas, "Courier New", monospace;
+        font-size: 0.875rem;
+        line-height: 1.5rem;
+        color: var(--gold);
+      }
+
+      .launch-hint {
+        position: absolute;
+        bottom: 33.333%;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        font-weight: 700;
+        color: var(--accent-soft);
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+
+      @keyframes pulse {
+        50% {
+          opacity: 0.5;
+        }
+      }
+
       .btn {
+        font-family: inherit;
         background: #3b82f6;
         color: white;
         border: none;
@@ -122,29 +209,25 @@
       <canvas id="gameCanvas"></canvas>
 
       <div id="start-overlay" class="overlay">
-        <h1 class="text-5xl font-black mb-6 text-blue-500 italic">BREAKOUT</h1>
-        <div class="space-y-2 text-gray-300">
-          <p>Move: <span class="text-white font-bold">Arrow Keys</span></p>
-          <p>Launch / Fire: <span class="text-white font-bold">Space Bar</span></p>
-          <p class="text-sm text-gray-400">Catch the drops: W wide &middot; M multiball &middot; L laser &middot; C catch &middot; S slow</p>
-          <p class="text-sm text-gray-400">P Pause &middot; M Mute &middot; ESC Arcade</p>
+        <h1 class="title">BREAKOUT</h1>
+        <div class="help">
+          <p>Move: <b>Arrow Keys</b></p>
+          <p>Launch / Fire: <b>Space Bar</b></p>
+          <p class="small">Catch the drops: W wide &middot; M multiball &middot; L laser &middot; C catch &middot; S slow</p>
+          <p class="small">P Pause &middot; M Mute &middot; ESC Arcade</p>
         </div>
-        <pre class="high-scores mt-4 text-yellow-400 text-sm leading-6"></pre>
+        <pre class="high-scores"></pre>
         <button class="btn" onclick="initGame()">START GAME</button>
       </div>
 
       <div id="game-over-overlay" class="overlay" style="display: none">
-        <h1 id="end-title" class="text-4xl font-bold mb-4">GAME OVER</h1>
-        <p id="final-score" class="text-xl text-gray-400">Final Score: 0</p>
-        <pre class="high-scores mt-4 text-yellow-400 text-sm leading-6"></pre>
+        <h1 id="end-title" class="end-title">GAME OVER</h1>
+        <p id="final-score" class="final-score">Final Score: 0</p>
+        <pre class="high-scores"></pre>
         <button class="btn" onclick="resetGame()">PLAY AGAIN</button>
       </div>
 
-      <div
-        id="launch-hint"
-        class="absolute bottom-1/3 left-0 w-full text-center text-blue-400 font-bold animate-pulse"
-        style="display: none"
-      >
+      <div id="launch-hint" class="launch-hint" style="display: none">
         PRESS SPACE TO LAUNCH
       </div>
     </div>
