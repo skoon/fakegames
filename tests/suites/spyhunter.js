@@ -350,3 +350,70 @@ suite("spyhunter: the controls are dead while inside the van", function () {
   check("the car did not move", scene.carX === x, "x " + scene.carX);
   check("still boarding", scene.playerState === "boarding");
 });
+
+/* --------------------------------------------------------------- the look --- */
+
+suite("spyhunter art: roadside scenery scrolls with the road and is recycled", function () {
+  const scene = freshScene();
+  scene.started = true;
+  const count = scene.scenery.length;
+  check("there is scenery", count > 0, "got " + count);
+
+  const before = scene.scenery.map((item) => item.y);
+  scene.scrollScenery(0.05);
+  const moved = scene.scenery.filter((item, i) => Math.abs(item.y - before[i] - ROAD_SPEED * 0.05) < 0.001);
+  check("it moves down at road speed", moved.length === count, moved.length + " of " + count);
+
+  // Drive for a long time: nothing piles up, nothing wanders off for good.
+  for (let i = 0; i < 2000; i++) scene.scrollScenery(0.05);
+  check("the amount stays the same", scene.scenery.length === count, "now " + scene.scenery.length);
+  // Below the screen means it was never recycled. Far above is fine: the
+  // river waits up the road between crossings.
+  const lost = scene.scenery.filter((item) => item.y > GAME_HEIGHT + 400 || item.y < -3000);
+  check("every piece is recycled back above the screen", lost.length === 0, lost.length + " lost");
+});
+
+suite("spyhunter art: scenery stays off the tarmac", function () {
+  const scene = freshScene();
+  scene.started = true;
+  let bad = null;
+  for (let i = 0; i < 400; i++) {
+    scene.scrollScenery(0.05);
+    for (const item of scene.scenery) {
+      if (item.kind === "bridge") continue; // it carries the road over water
+      const left = item.x - item.halfWidth;
+      const right = item.x + item.halfWidth;
+      if (right > ROAD.left - ROAD.shoulder && left < ROAD.right + ROAD.shoulder) bad = item.kind + " at x " + item.x.toFixed(0);
+    }
+  }
+  check("nothing but a bridge overlaps the road", bad === null, bad);
+
+  const kinds = new Set(scene.scenery.map((item) => item.kind));
+  for (let i = 0; i < 4000 && kinds.size < 5; i++) {
+    scene.scrollScenery(0.05);
+    scene.scenery.forEach((item) => kinds.add(item.kind));
+  }
+  check("the roadside is varied", kinds.size >= 4, [...kinds].join(","));
+  check("and a river turns up", kinds.has("bridge"));
+});
+
+suite("spyhunter art: enemies come in three looks", function () {
+  const scene = freshScene();
+  const seen = new Set();
+  let bad = null;
+  for (let i = 0; i < 300; i++) {
+    scene.spawnEnemy();
+    const e = scene.enemies.getChildren()[scene.enemies.getChildren().length - 1];
+    if (ENEMY_LOOKS.indexOf(e.look) === -1) bad = String(e.look);
+    seen.add(e.look);
+  }
+  check("every enemy wears a known look", bad === null, bad);
+  check("all three turn up", seen.size === ENEMY_LOOKS.length, [...seen].join(","));
+});
+
+suite("spyhunter art: an explosion cleans up after itself", function () {
+  const scene = freshScene();
+  const before = spriteBook.live;
+  scene.explodeAt(240, 300);
+  check("no sprites left behind", spriteBook.live === before, (spriteBook.live - before) + " leaked");
+});

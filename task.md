@@ -313,3 +313,19 @@ Slip during the edit, caught and repaired: replacing the old car code cut
 through to the audio section and took the scenery/backdrop code with it. It
 was restored byte-for-byte from HEAD (4a9d756), and the diff against HEAD now
 touches only car code.
+
+### Pass 4 - Spy Hunter graphics
+- [x] Tests: hitbox sizes (guard), scenery scroll/recycle/off-tarmac, enemy looks, explosion cleanup
+- [x] Car sprites: spy car + three enemy looks, sizes unchanged
+- [x] Road tile, roadside scenery, river bridges
+- [x] Tracers, rocket flame, explosions, van detail
+- [x] HUD bar, weapon panel, title and game-over panels
+- [x] Suites green, screenshots checked
+
+Pass 4 notes: hitbox textures (car and all enemy looks 40x60, bullets 8x8,
+rocket 12x18) are asserted in real Phaser and passed before and after. The
+rocket points the way it flies with setFlipY, because a flip leaves the
+bounds alone and a rotation would not. Toned down after looking: the road
+cracks read as long black hairs. Staging artefacts, not bugs: the coupe on
+the van, and a sign in the river where the test page dropped the bridge onto
+scenery that was already placed.

@@ -95,3 +95,18 @@ suite("spyhunter e2e: shift deploys a weapon", function () {
   check("a slick hit the road", s.hazards.length === 1, "got " + s.hazards.length);
   check("ammo came off", s.weaponAmmo === 2, "ammo " + s.weaponAmmo);
 });
+
+suite("spyhunter e2e: hitboxes are the same size as ever", function () {
+  // Cars and bullets collide by sprite bounds, so these sizes are gameplay.
+  const size = (key) => {
+    const img = game.textures.get(key).getSourceImage();
+    return img.width + "x" + img.height;
+  };
+  check("player car 40x60", size("car") === "40x60", size("car"));
+  for (const look of (typeof ENEMY_LOOKS !== "undefined" ? ENEMY_LOOKS : ["enemy"])) {
+    check(look + " 40x60", size(look) === "40x60", size(look));
+  }
+  check("bullet 8x8", size("bullet") === "8x8", size("bullet"));
+  check("enemy bullet 8x8", size("enemyBullet") === "8x8", size("enemyBullet"));
+  check("rocket 12x18", size("rocket") === "12x18", size("rocket"));
+});

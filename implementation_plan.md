@@ -472,3 +472,73 @@ untouched, and their tests hold the new drawings to that.
 ## Out of scope
 
 The crash effect, the car count, AI behaviour.
+
+---
+
+# Graphics pass 4: Spy Hunter, arcade homage
+
+Graphics only: every rule, speed, score and hitbox stays as it is.
+
+## The one thing that must not move
+
+The player's car, the enemy cars and every bullet collide by sprite bounds
+(`getBounds()` into `RectangleToRectangle`). Their texture sizes *are* their
+hitboxes, so they are fixed:
+
+| Texture | Size |
+| --- | --- |
+| car, every enemy look | 40x60 |
+| bullet, enemyBullet | 8x8 |
+| rocket | 12x18 |
+
+A new real-Phaser test asserts these sizes, and it passes before and after.
+The van, hazards and missiles already use plain arithmetic, so their art is
+free to change. The drivable road stays at x 90-390, because the steering
+clamps depend on it.
+
+## What changes
+
+- **Cars:** built from lists of rectangles, the same technique as the Pole
+  Position sprites, drawn top-down.
+  - Player: a sleek white spy car with a long bonnet, a tinted windscreen, a
+    blue stripe, a rear spoiler, and head and tail lights.
+  - Enemies: three looks, picked at random per car: a black sedan with gold
+    trim, a maroon coupe, and a gunmetal armoured car. **They look different
+    and behave identically.**
+- **Road:** a longer procedural tile with gravel shoulders, painted edge
+  lines, lane dashes, patches, cracks and skid marks, so the repeat is not
+  obvious.
+- **Roadside:** trees, bushes, houses, fences and signposts on the grass,
+  scrolling with the road and recycled as they leave. Every so often a river
+  crosses under the road: water across the grass, a concrete bridge deck and
+  railings at the road's edges. All decoration; nothing collides with it.
+- **Effects:**
+  - Glowing tracers for both guns, and a rocket with a flame.
+  - Explosions become a fireball with flying debris, replacing the flat
+    orange cross.
+  - The van gets more detail: roof vents, a lit interior, a hazard stripe on
+    the ramp.
+- **HUD:** a dark bar across the top with the score, lives as small car icons,
+  and HP as hearts. The weapon panel at the bottom shows an icon plus ammo pips.
+  The mute button is restyled.
+- **Title and game over:** a proper title panel (the car, PRESS SPACE, the
+  score table, the controls, and the three weapons with icons) and a matching
+  game-over panel. The black canvas-text boxes (`makeTextTexture`) go.
+
+## Testing
+
+- **Guard, must pass before and after:** hitbox textures keep their sizes
+  (real Phaser).
+- **New, fail first:**
+  - Roadside scenery scrolls at road speed and is recycled, never piling up.
+  - Scenery keeps off the tarmac.
+  - Enemies take one of the three looks, all three turn up, and the look does
+    not change their speed or firing.
+  - An explosion cleans up after itself.
+- Existing spyhunter suite and e2e suite stay green.
+- Screenshots: title, a busy moment, the bridge, game over.
+
+## Out of scope
+
+Enemy types that behave differently, civilians, forks and narrowing roads.
+Those are gameplay, and they stay open in the service manual.

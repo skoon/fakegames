@@ -6,7 +6,7 @@ const ROAD_SPEED = 250;
 const ROAD = { left: 90, right: 390, width: 300, shoulder: 10 };
 const LANE_COUNT = 3;
 const LANE_WIDTH = ROAD.width / LANE_COUNT;
-const TILE_HEIGHT = 144;
+const TILE_HEIGHT = GAME_HEIGHT; // one screen tall, so the repeat is hard to spot
 
 const CAR = {
   w: 32, h: 52,
@@ -69,90 +69,328 @@ const HAZARD_RADIUS = 26;
 const MISSILE_SPEED = 720;
 const MISSILE_RADIUS = 22;
 
+/* ------------------------------------------------------------------ art ---
+ *
+ * Arcade homage: top-down pixel art, built from lists of rectangles so every
+ * sprite is a readable table rather than a wall of fill calls.
+ *
+ * Cars, bullets and rockets collide by sprite bounds (getBounds into
+ * RectangleToRectangle), so their texture sizes are their hitboxes. The
+ * drawing inside those boxes is free to change; the boxes are not.
+ */
+const HITBOX = { car: [40, 60], bullet: [8, 8], enemyBullet: [8, 8], rocket: [12, 18] };
+
+/** Draws [x, y, w, h, colour, alpha?] rectangles into a texture. */
+function rectTexture(scene, key, size, parts) {
+  const g = scene.make.graphics({ add: false });
+  for (const [x, y, w, h, color, alpha] of parts) {
+    g.fillStyle(color, alpha === undefined ? 1 : alpha);
+    g.fillRect(x, y, w, h);
+  }
+  g.generateTexture(key, size[0], size[1]);
+  g.destroy();
+}
+
+/**
+ * A top-down car in the 40x60 box, nose up. Every car shares this layout;
+ * a palette and a few extras make the difference.
+ */
+function carParts(p) {
+  const tyre = p.tyre || 0x1c1c1e;
+  return [
+    [7, 6, 32, 52, 0x000000, 0.3], // shadow
+    [4, 10, 4, 11, tyre], [32, 10, 4, 11, tyre], [4, 38, 4, 12, tyre], [32, 38, 4, 12, tyre],
+    [9, 2, 22, 2, p.body], [7, 4, 26, 50, p.body], [9, 54, 22, 2, p.body],
+    [7, 4, 2, 50, p.side], [31, 4, 2, 50, p.side],
+    [10, 18, 20, 7, p.glass], [11, 19, 6, 2, p.glare],
+    [10, 25, 20, 11, p.roof],
+    [11, 36, 18, 5, p.glass],
+  ].concat(p.extras || [], [
+    [9, 2, 5, 2, 0xfff3b0], [26, 2, 5, 2, 0xfff3b0], // headlights
+    [9, 54, 5, 2, 0xe8201c], [26, 54, 5, 2, 0xe8201c], // tail lights
+  ]);
+}
+
+const SPY_CAR = {
+  body: 0xf2f4f8, side: 0xc4cad4, glass: 0x243556, glare: 0x6a86b8, roof: 0xf2f4f8,
+  extras: [
+    [18, 2, 4, 16, 0x2a5bd7], [18, 25, 4, 11, 0x2a5bd7], [18, 41, 4, 13, 0x2a5bd7], // stripe
+    [12, 9, 3, 6, 0xbfc6d2], [25, 9, 3, 6, 0xbfc6d2], // bonnet vents
+    [7, 50, 26, 3, 0x1c1c1e], // spoiler
+  ],
+};
+
+// Three enemy looks. Same box, same behaviour - only the paint differs.
+const ENEMY_STYLES = {
+  enemy: { // black sedan, gold trim
+    body: 0x1e1e24, side: 0x0e0e12, glass: 0x3a4a5e, glare: 0x6a7a90, roof: 0x2a2a32,
+    extras: [[8, 6, 1, 46, 0xc9a227], [31, 6, 1, 46, 0xc9a227], [13, 2, 14, 2, 0xa8adb5]],
+  },
+  enemyCoupe: { // maroon coupe, black roof
+    body: 0x7a1622, side: 0x4e0e16, glass: 0x2a2a38, glare: 0x5a5a78, roof: 0x141414,
+    extras: [[15, 5, 10, 12, 0x8e1c2a], [12, 55, 3, 1, 0x8a8f98], [25, 55, 3, 1, 0x8a8f98]],
+  },
+  enemyArmored: { // gunmetal, plated, slit windows
+    body: 0x4a5058, side: 0x33383e, glass: 0x1a1e22, glare: 0x1a1e22, roof: 0x5a616a, tyre: 0x111113,
+    extras: [
+      [10, 18, 20, 7, 0x4a5058], [12, 20, 16, 2, 0x1a1e22], // armoured windscreen
+      [9, 8, 22, 1, 0x6a717a], [9, 44, 22, 1, 0x6a717a], [9, 30, 22, 1, 0x6a717a],
+      [9, 6, 1, 1, 0x9aa0a8], [30, 6, 1, 1, 0x9aa0a8], [9, 50, 1, 1, 0x9aa0a8], [30, 50, 1, 1, 0x9aa0a8],
+    ],
+  },
+};
+const ENEMY_LOOKS = Object.keys(ENEMY_STYLES);
+
+function generateCarTextures(scene) {
+  rectTexture(scene, 'car', HITBOX.car, carParts(SPY_CAR));
+  for (const look of ENEMY_LOOKS) rectTexture(scene, look, HITBOX.car, carParts(ENEMY_STYLES[look]));
+  // Lives are shown as little spy cars in the HUD.
+  rectTexture(scene, 'lifeIcon', [12, 18], [
+    [1, 0, 10, 18, 0xf2f4f8], [0, 3, 1, 4, 0x1c1c1e], [11, 3, 1, 4, 0x1c1c1e],
+    [0, 12, 1, 4, 0x1c1c1e], [11, 12, 1, 4, 0x1c1c1e], [2, 5, 8, 3, 0x243556], [5, 0, 2, 5, 0x2a5bd7],
+    [5, 8, 2, 10, 0x2a5bd7],
+  ]);
+}
+
+function generateShotTextures(scene) {
+  // Tracers: a soft glow round a hot core.
+  rectTexture(scene, 'bullet', HITBOX.bullet, [
+    [1, 0, 6, 8, 0xffd21e, 0.35], [2, 1, 4, 6, 0xffe066, 0.8], [3, 0, 2, 8, 0xffffff],
+  ]);
+  rectTexture(scene, 'enemyBullet', HITBOX.enemyBullet, [
+    [1, 0, 6, 8, 0xff3b2a, 0.4], [2, 1, 4, 6, 0xff7a4a, 0.85], [3, 1, 2, 6, 0xffe0c0],
+  ]);
+  // Nose up; enemyFire flips it to point the way it flies.
+  rectTexture(scene, 'rocket', HITBOX.rocket, [
+    [3, 14, 6, 4, 0xff6a00, 0.35],
+    [4, 2, 4, 10, 0xcfd4dc], [4, 0, 4, 2, 0xe8201c], [5, 0, 2, 1, 0xff8a7a],
+    [2, 9, 2, 4, 0x6a717a], [8, 9, 2, 4, 0x6a717a],
+    [4, 12, 4, 2, 0x3a3a3e], [4, 14, 4, 2, 0xffcf1a], [5, 16, 2, 2, 0xff6a00],
+  ]);
+}
+
+/** A fireball: hot white core out to a ragged red rim. And bits of car. */
+function generateExplosionTextures(scene) {
+  const g = scene.make.graphics({ add: false });
+  const bands = [[5, 0xffffff], [8, 0xfff3a0], [11, 0xffcf1a], [13, 0xff6a00], [15, 0xc81e0e]];
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      const d = Math.hypot(x + 0.5 - 16, y + 0.5 - 16) + (hash(x >> 1, y >> 1) - 0.5) * 3;
+      const band = bands.find(([r]) => d < r);
+      if (!band) continue;
+      g.fillStyle(band[1], 1);
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+  g.generateTexture('explosion', 32, 32);
+  g.destroy();
+  rectTexture(scene, 'debris', [4, 4], [[0, 0, 4, 4, 0x3a3a3e], [1, 1, 2, 2, 0xff8a2a]]);
+}
+
+/** Deterministic 0..1 noise for the procedural textures. */
+function hash(a, b) {
+  let h = Math.imul(a, 374761393) + Math.imul(b, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+/**
+ * The road: mown grass, gravel shoulders, tarmac with grain, patches, cracks
+ * and skid marks. One full screen tall so the repeat is hard to spot, and
+ * every feature stays clear of the top and bottom edges so it tiles.
+ */
 function generateRoadTexture(scene) {
   const g = scene.make.graphics({ add: false });
+  const H = TILE_HEIGHT;
   const { left, right, width, shoulder } = ROAD;
+  const rnd = (i, salt) => hash(i, salt);
 
-  g.fillStyle(0x2d5a1e);
-  g.fillRect(0, 0, GAME_WIDTH, TILE_HEIGHT);
-  g.fillStyle(0x255018);
-  for (let i = 0; i < 30; i++) {
-    g.fillRect(Math.random() * left, Math.random() * TILE_HEIGHT, 4 + Math.random() * 16, 4 + Math.random() * 8);
+  // Grass, mown in stripes.
+  g.fillStyle(0x3f8f35);
+  g.fillRect(0, 0, GAME_WIDTH, H);
+  g.fillStyle(0x378230);
+  for (let y = 0; y < H; y += 48) {
+    g.fillRect(0, y, left - shoulder, 24);
+    g.fillRect(right + shoulder, y, GAME_WIDTH - right - shoulder, 24);
   }
-  for (let i = 0; i < 30; i++) {
-    g.fillRect(right + Math.random() * (GAME_WIDTH - right), Math.random() * TILE_HEIGHT, 4 + Math.random() * 16, 4 + Math.random() * 8);
-  }
-
-  g.fillStyle(0x5a4a3a);
-  g.fillRect(left - shoulder, 0, shoulder, TILE_HEIGHT);
-  g.fillRect(right, 0, shoulder, TILE_HEIGHT);
-  g.fillStyle(0x4a3a2a);
-  for (let i = 0; i < 16; i++) {
-    const sx = (i < 8 ? left - shoulder : right) + Math.random() * shoulder;
-    g.fillRect(sx, Math.random() * TILE_HEIGHT, 2 + Math.random() * 4, 2 + Math.random() * 4);
+  for (let i = 0; i < 260; i++) {
+    const onLeft = i % 2 === 0;
+    const x = onLeft ? rnd(i, 1) * (left - shoulder - 2) : right + shoulder + rnd(i, 1) * (GAME_WIDTH - right - shoulder - 2);
+    g.fillStyle(rnd(i, 2) < 0.5 ? 0x2f7428 : 0x56a84a);
+    g.fillRect(x, rnd(i, 3) * H, 2, 2);
   }
 
-  g.fillStyle(0x404040);
-  g.fillRect(left, 0, width, TILE_HEIGHT);
-  g.fillStyle(0x484848);
-  for (let i = 0; i < 40; i++) {
-    g.fillRect(left + 4 + Math.random() * (width - 8), Math.random() * TILE_HEIGHT, 2, 2);
+  // Gravel shoulders.
+  g.fillStyle(0x8a7a62);
+  g.fillRect(left - shoulder, 0, shoulder, H);
+  g.fillRect(right, 0, shoulder, H);
+  for (let i = 0; i < 160; i++) {
+    const x = (i % 2 ? right : left - shoulder) + rnd(i, 4) * (shoulder - 1);
+    g.fillStyle(rnd(i, 5) < 0.5 ? 0x6e6050 : 0xa8987e);
+    g.fillRect(x, rnd(i, 6) * H, 1 + (i % 2), 1 + ((i >> 1) % 2));
   }
 
-  g.fillStyle(0xffffff);
-  g.fillRect(left, 0, 3, TILE_HEIGHT);
-  g.fillRect(right - 3, 0, 3, TILE_HEIGHT);
+  // Tarmac and its grain.
+  g.fillStyle(0x3c3c40);
+  g.fillRect(left, 0, width, H);
+  for (let i = 0; i < 700; i++) {
+    g.fillStyle(rnd(i, 7) < 0.5 ? 0x46464a : 0x323236);
+    g.fillRect(left + rnd(i, 8) * width, rnd(i, 9) * H, 1 + (i % 2), 1);
+  }
 
-  for (let lane = 1; lane < LANE_COUNT; lane++) {
-    const lx = left + lane * LANE_WIDTH;
-    for (let y = 0; y < TILE_HEIGHT + 36; y += 36) {
-      g.fillRect(lx - 2, y - 30, 4, 20);
+  // Resurfaced patches.
+  for (let i = 0; i < 5; i++) {
+    const w = 30 + rnd(i, 10) * 50, h = 24 + rnd(i, 11) * 50;
+    const x = left + 8 + rnd(i, 12) * (width - w - 16), y = 20 + rnd(i, 13) * (H - h - 40);
+    g.fillStyle(0x333337);
+    g.fillRect(x - 1, y - 1, w + 2, h + 2);
+    g.fillStyle(0x38383c);
+    g.fillRect(x, y, w, h);
+  }
+
+  // Cracks: short, faint zigzags - long dark ones read as tyre marks.
+  g.fillStyle(0x2e2e32);
+  for (let i = 0; i < 7; i++) {
+    let x = left + 10 + rnd(i, 14) * (width - 20), y = 30 + rnd(i, 15) * (H - 90);
+    for (let s = 0; s < 7; s++) {
+      g.fillRect(x, y, 1, 3);
+      x += rnd(i * 31 + s, 16) < 0.5 ? -1 : 1;
+      y += 3;
     }
   }
 
-  g.fillStyle(0xffffff);
-  g.fillRect(left, 0, 1, TILE_HEIGHT);
-  g.fillRect(right - 1, 0, 1, TILE_HEIGHT);
+  // Skid marks: pairs of dark streaks that drift sideways.
+  for (let i = 0; i < 3; i++) {
+    const x0 = left + 40 + rnd(i, 17) * (width - 100), y0 = 60 + rnd(i, 18) * (H - 220);
+    const drift = (rnd(i, 19) - 0.5) * 0.4;
+    for (let s = 0; s < 120; s += 2) {
+      const x = x0 + drift * s + Math.sin(s / 30) * 3;
+      g.fillStyle(0x18181a, 0.45);
+      g.fillRect(x, y0 + s, 3, 2);
+      g.fillRect(x + 24, y0 + s, 3, 2);
+    }
+  }
 
-  g.generateTexture('road', GAME_WIDTH, TILE_HEIGHT);
+  // Edge lines and lane dashes, spaced to divide the tile evenly.
+  g.fillStyle(0xf2f2f2);
+  g.fillRect(left, 0, 3, H);
+  g.fillRect(right - 3, 0, 3, H);
+  for (let lane = 1; lane < LANE_COUNT; lane++) {
+    const lx = left + lane * LANE_WIDTH;
+    for (let y = 0; y < H + 36; y += 36) g.fillRect(lx - 2, y - 30, 4, 20);
+  }
+
+  g.generateTexture('road', GAME_WIDTH, H);
+  g.destroy();
 }
 
-function generateBulletTexture(scene) {
-  const g = scene.make.graphics({ add: false });
-  g.fillStyle(0xffffff);
-  g.fillRect(2, 0, 4, 8);
-  g.fillStyle(0xffff88);
-  g.fillRect(2, 0, 4, 6);
-  g.fillStyle(0xffff44);
-  g.fillRect(2, 0, 4, 4);
-  g.generateTexture('bullet', 8, 8);
+/* ------------------------------------------------------------- scenery --- */
+
+// Roadside dressing, top-down. `half` is half the width, for keeping clear of
+// the road; `weight` is how often it turns up.
+const SCENERY = {
+  tree: { half: 15, weight: 35 },
+  pine: { half: 12, weight: 25 },
+  bush: { half: 9, weight: 20 },
+  house: { half: 23, weight: 10 },
+  sign: { half: 5, weight: 5 },
+  fence: { half: 3, weight: 5 },
+};
+const SCENERY_PER_SIDE = 9;
+const BRIDGE = { h: 120, gapMin: 1400, gapMax: 2600 };
+
+function generateSceneryTextures(scene) {
+  let g = scene.make.graphics({ add: false });
+  // Round tree: shadow, canopy, lit side.
+  g.fillStyle(0x000000, 0.25); g.fillCircle(18, 18, 12);
+  g.fillStyle(0x1f6b2a); g.fillCircle(15, 15, 14);
+  g.fillStyle(0x2f8a36); g.fillCircle(13, 13, 10);
+  g.fillStyle(0x4cae44); g.fillCircle(10, 10, 4);
+  g.generateTexture('tree', 32, 32); g.destroy();
+
+  g = scene.make.graphics({ add: false });
+  g.fillStyle(0x000000, 0.25); g.fillCircle(14, 14, 10);
+  g.fillStyle(0x17522a); g.fillCircle(12, 12, 11);
+  g.fillStyle(0x236b35);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    g.fillTriangle(12, 12, 12 + Math.cos(a) * 11, 12 + Math.sin(a) * 11, 12 + Math.cos(a + 0.4) * 7, 12 + Math.sin(a + 0.4) * 7);
+  }
+  g.fillStyle(0x2f7d3e); g.fillCircle(11, 11, 3);
+  g.generateTexture('pine', 26, 26); g.destroy();
+
+  g = scene.make.graphics({ add: false });
+  g.fillStyle(0x2a7a2c); g.fillEllipse(6, 8, 12, 10); g.fillEllipse(12, 6, 12, 10);
+  g.fillStyle(0x46a040); g.fillEllipse(10, 5, 6, 4);
+  g.generateTexture('bush', 18, 14); g.destroy();
+
+  rectTexture(scene, 'house', [46, 40], [
+    [4, 4, 42, 36, 0x000000, 0.25],
+    [0, 0, 42, 36, 0x8a3a26], [0, 0, 21, 36, 0xa84a32], // roof halves, lit and shaded
+    [20, 0, 2, 36, 0x5e2618], // ridge
+    [30, 6, 6, 6, 0x5a5a5e], [31, 7, 4, 4, 0x3a3a3e], // chimney
+    [0, 34, 42, 2, 0x6e2a1a],
+  ]);
+  rectTexture(scene, 'sign', [10, 18], [
+    [4, 8, 2, 10, 0x8a8f98], [0, 0, 10, 8, 0x1b6b3a], [1, 1, 8, 6, 0xf2f2f2], [2, 3, 6, 2, 0x1b6b3a],
+  ]);
+  const fence = [];
+  for (let y = 0; y < 64; y += 16) fence.push([1, y, 4, 4, 0x6b4526]);
+  fence.push([2, 0, 2, 64, 0xa87a4a]);
+  rectTexture(scene, 'fence', [6, 64], fence);
+
+  // A river under a concrete bridge: water on the grass either side, the
+  // tarmac carried across on a deck with railings.
+  const H = BRIDGE.h;
+  const parts = [
+    [0, 0, GAME_WIDTH, H, 0x2a6fb0],
+    [0, 0, GAME_WIDTH, 6, 0xc8b07a], [0, H - 6, GAME_WIDTH, 6, 0xc8b07a], // banks
+  ];
+  for (let i = 0; i < 40; i++) {
+    const x = hash(i, 30) * GAME_WIDTH, y = 10 + hash(i, 31) * (H - 20);
+    parts.push([x, y, 8 + hash(i, 32) * 10, 1, 0x5a9ad8]); // ripples
+  }
+  parts.push(
+    [ROAD.left - ROAD.shoulder, 0, ROAD.width + ROAD.shoulder * 2, H, 0x8e8e92], // deck
+    [ROAD.left, 0, ROAD.width, H, 0x46464a],
+    [ROAD.left - ROAD.shoulder + 2, 0, 5, H, 0xc0c4ca], [ROAD.right + ROAD.shoulder - 7, 0, 5, H, 0xc0c4ca],
+    [ROAD.left, 38, ROAD.width, 2, 0x2e2e32], [ROAD.left, 80, ROAD.width, 2, 0x2e2e32] // joints
+  );
+  for (let y = 4; y < H; y += 16) {
+    parts.push([ROAD.left - ROAD.shoulder + 1, y, 7, 3, 0x6a6e76], [ROAD.right + ROAD.shoulder - 8, y, 7, 3, 0x6a6e76]);
+  }
+  rectTexture(scene, 'bridge', [GAME_WIDTH, H], parts);
 }
 
-function generateEnemyBulletTexture(scene) {
-  const g = scene.make.graphics({ add: false });
-  g.fillStyle(0xff4444);
-  g.fillRect(1, 0, 6, 8);
-  g.fillStyle(0xffaa44);
-  g.fillRect(2, 1, 4, 5);
-  g.fillStyle(0xffff88);
-  g.fillRect(3, 2, 2, 3);
-  g.generateTexture('enemyBullet', 8, 8);
+function pickSceneryKind() {
+  const kinds = Object.keys(SCENERY);
+  const total = kinds.reduce((sum, k) => sum + SCENERY[k].weight, 0);
+  let roll = Math.random() * total;
+  for (const k of kinds) {
+    roll -= SCENERY[k].weight;
+    if (roll <= 0) return k;
+  }
+  return kinds[kinds.length - 1];
 }
 
-function generateRocketTexture(scene) {
-  const g = scene.make.graphics({ add: false });
-  g.fillStyle(0x884422);
-  g.fillRect(2, 0, 8, 18);
-  g.fillStyle(0xcc6633);
-  g.fillRect(3, 0, 6, 16);
-  g.fillStyle(0xff8844);
-  g.fillRect(4, 1, 4, 12);
-  g.fillStyle(0xffaa44);
-  g.fillRect(4, 14, 4, 4);
-  g.fillStyle(0xffff88);
-  g.fillRect(5, 15, 2, 3);
-  g.generateTexture('rocket', 12, 18);
+/** Picks a new look and a spot on the grass for one side of the road. */
+function dressSceneryItem(item) {
+  item.kind = pickSceneryKind();
+  item.halfWidth = SCENERY[item.kind].half;
+  const lo = item.side < 0 ? item.halfWidth + 2 : ROAD.right + ROAD.shoulder + item.halfWidth + 2;
+  const hi = item.side < 0 ? ROAD.left - ROAD.shoulder - item.halfWidth - 2 : GAME_WIDTH - item.halfWidth - 2;
+  item.x = lo + Math.random() * Math.max(0, hi - lo);
 }
+
+/** Shared HUD text style: bold, outlined, readable over grass or tarmac. */
+function textStyle(size, color) {
+  return {
+    fontFamily: 'monospace', fontSize: size + 'px', fontStyle: 'bold',
+    color: color, stroke: '#000000', strokeThickness: 3, align: 'center',
+  };
+}
+
+
 const GAME_KEY = 'spyhunter';
 
 function noteToFrequency(note) {
@@ -225,120 +463,37 @@ function playSfx(key) {
       break;
   }
 }
-function generateEnemyTexture(scene) {
-  const g = scene.make.graphics({ add: false });
-  const w = ENEMY.w, h = ENEMY.h;
-
-  g.fillStyle(0x000000, 0.3);
-  g.fillRect(2, 2, w + 2, h + 2);
-  g.fillStyle(0x000000, 0.2);
-  g.fillRect(4, 4, w, h);
-
-  g.fillStyle(0x1a1a1a);
-  g.fillRect(0, 7, 7, 10);
-  g.fillRect(w - 7, 7, 7, 10);
-  g.fillRect(0, h - 17, 7, 10);
-  g.fillRect(w - 7, h - 17, 7, 10);
-
-  g.fillStyle(0x444444);
-  g.fillRect(1, 8, 5, 8);
-  g.fillRect(w - 6, 8, 5, 8);
-  g.fillRect(1, h - 16, 5, 8);
-  g.fillRect(w - 6, h - 16, 5, 8);
-
-  g.fillStyle(0x1a4466);
-  g.fillRect(6, 32, 20, 18);
-  g.fillRect(4, 14, 24, 20);
-  g.fillRect(7, 2, 18, 14);
-
-  g.fillStyle(0x225577);
-  g.fillRect(5, 30, 22, 20);
-  g.fillRect(3, 12, 26, 20);
-  g.fillRect(6, 1, 20, 14);
-
-  g.fillStyle(0x5588aa);
-  g.fillRect(10, 10, 12, 10);
-  g.fillStyle(0x3377aa);
-  g.fillRect(10, 11, 12, 8);
-
-  g.fillStyle(0x5588aa);
-  g.fillRect(10, 34, 12, 8);
-  g.fillStyle(0x3377aa);
-  g.fillRect(10, 35, 12, 6);
-
-  g.fillStyle(0xffee88);
-  g.fillRect(6, 0, 6, 3);
-  g.fillRect(w - 12, 0, 6, 3);
-  g.fillStyle(0xffffcc);
-  g.fillRect(7, 0, 4, 2);
-  g.fillRect(w - 11, 0, 4, 2);
-
-  g.fillStyle(0xff3333);
-  g.fillRect(7, h - 3, 6, 3);
-  g.fillRect(w - 13, h - 3, 6, 3);
-
-  g.fillStyle(0x447799);
-  g.fillRect(15, 3, 2, 6);
-  g.fillRect(15, 28, 2, 8);
-
-  g.fillStyle(0xcc6600);
-  g.fillRect(4, 26, 4, 4);
-  g.fillRect(w - 8, 26, 4, 4);
-
-  g.generateTexture('enemy', w + 8, h + 8);
-}
-
 function generateVanTextures(scene) {
   const w = VAN.w;
   const h = VAN.h;
 
-  // Closed: a plain white box truck.
-  let g = scene.make.graphics({ add: false });
-  g.fillStyle(0x000000, 0.35);
-  g.fillRect(4, 4, w, h);
-  g.fillStyle(0xdddddd);
-  g.fillRect(0, 0, w, h);
-  g.fillStyle(0xf4f4f4);
-  g.fillRect(3, 3, w - 6, h - 20);
-  g.fillStyle(0x2a2a2a);
-  g.fillRect(6, 4, w - 12, 14); // cab roof
-  g.fillStyle(0x1a1a1a);
-  g.fillRect(0, 18, 6, 20);
-  g.fillRect(w - 6, 18, 6, 20);
-  g.fillRect(0, h - 40, 6, 22);
-  g.fillRect(w - 6, h - 40, 6, 22);
-  g.fillStyle(0x888888);
-  g.fillRect(8, h - 16, w - 16, 14); // shut rear door
-  g.fillStyle(0xff3333);
-  g.fillRect(6, h - 4, 8, 4);
-  g.fillRect(w - 14, h - 4, 8, 4);
-  g.generateTexture('van', w + 4, h + 4);
-  g.destroy();
+  // Closed: a white box truck with roof vents and a blue stripe.
+  rectTexture(scene, 'van', [w + 4, h + 4], [
+    [4, 4, w, h, 0x000000, 0.35],
+    [0, 0, w, h, 0xdcdcdc], [3, 3, w - 6, h - 20, 0xf4f4f4],
+    [6, 4, w - 12, 14, 0x2a2a2a], [9, 6, w - 18, 6, 0x3a5a8a], // cab and windscreen
+    [0, 24, 3, 70, 0x2a5bd7], [w - 3, 24, 3, 70, 0x2a5bd7], // stripes
+    [14, 30, 8, 4, 0xb8b8b8], [w - 22, 30, 8, 4, 0xb8b8b8], [14, 60, 8, 4, 0xb8b8b8], [w - 22, 60, 8, 4, 0xb8b8b8],
+    [0, 18, 6, 20, 0x1a1a1a], [w - 6, 18, 6, 20, 0x1a1a1a], [0, h - 40, 6, 22, 0x1a1a1a], [w - 6, h - 40, 6, 22, 0x1a1a1a],
+    [8, h - 16, w - 16, 14, 0x888888], [w / 2 - 1, h - 16, 2, 14, 0x6a6a6a], // shut rear doors
+    [6, h - 4, 8, 4, 0xff3333], [w - 14, h - 4, 8, 4, 0xff3333],
+  ]);
 
-  // Open: rear door up, ramp down, lit inside.
-  g = scene.make.graphics({ add: false });
-  g.fillStyle(0x000000, 0.35);
-  g.fillRect(4, 4, w, h);
-  g.fillStyle(0xdddddd);
-  g.fillRect(0, 0, w, h - 14);
-  g.fillStyle(0xf4f4f4);
-  g.fillRect(3, 3, w - 6, h - 34);
-  g.fillStyle(0x2a2a2a);
-  g.fillRect(6, 4, w - 12, 14);
-  g.fillStyle(0x1a1a1a);
-  g.fillRect(0, 18, 6, 20);
-  g.fillRect(w - 6, 18, 6, 20);
-  // The lit interior you are aiming for.
-  g.fillStyle(0xffcc33);
-  g.fillRect(10, h - 30, w - 20, 16);
-  g.fillStyle(0xffee99);
-  g.fillRect(14, h - 26, w - 28, 10);
-  // Ramp
-  g.fillStyle(0xaaaaaa);
-  g.fillRect(12, h - 14, w - 24, 14);
-  g.generateTexture('vanOpen', w + 4, h + 4);
-  g.destroy();
+  // Open: doors up, lit inside, ramp down with a hazard stripe to aim for.
+  const ramp = [];
+  for (let i = 0; i < 5; i++) ramp.push([12 + i * 6, h - 4, 3, 4, 0xffd21e], [15 + i * 6, h - 4, 3, 4, 0x1a1a1a]);
+  rectTexture(scene, 'vanOpen', [w + 4, h + 4], [
+    [4, 4, w, h, 0x000000, 0.35],
+    [0, 0, w, h - 14, 0xdcdcdc], [3, 3, w - 6, h - 34, 0xf4f4f4],
+    [6, 4, w - 12, 14, 0x2a2a2a], [9, 6, w - 18, 6, 0x3a5a8a],
+    [0, 24, 3, 60, 0x2a5bd7], [w - 3, 24, 3, 60, 0x2a5bd7],
+    [14, 30, 8, 4, 0xb8b8b8], [w - 22, 30, 8, 4, 0xb8b8b8],
+    [0, 18, 6, 20, 0x1a1a1a], [w - 6, 18, 6, 20, 0x1a1a1a],
+    [10, h - 30, w - 20, 16, 0xffcc33], [14, h - 26, w - 28, 10, 0xffee99], // the lit interior
+    [12, h - 14, w - 24, 14, 0xaaaaaa], ...ramp,
+  ]);
 
+  let g;
   // Oil slick. Near-black on near-black tarmac is invisible, so it gets a
   // petrol sheen around the rim to make it read on the road.
   g = scene.make.graphics({ add: false });
@@ -381,105 +536,6 @@ function generateVanTextures(scene) {
   g.destroy();
 }
 
-function generateExplosionTexture(scene) {
-  const g = scene.make.graphics({ add: false });
-  const s = 32;
-  g.fillStyle(0xff6600);
-  g.fillRect(s / 2 - 1, 0, 2, s);
-  g.fillRect(0, s / 2 - 1, s, 2);
-  g.fillRect(4, 4, s - 8, s - 8);
-  g.fillStyle(0xffaa00);
-  g.fillRect(s / 2 - 1, 4, 2, s - 8);
-  g.fillRect(4, s / 2 - 1, s - 8, 2);
-  g.fillStyle(0xffff44);
-  g.fillRect(s / 2 - 1, s / 2 - 1, 2, 2);
-  g.fillRect(s / 4, s / 4, 2, 2);
-  g.fillRect(s * 3 / 4 - 2, s / 4, 2, 2);
-  g.fillRect(s / 4, s * 3 / 4 - 2, 2, 2);
-  g.fillRect(s * 3 / 4 - 2, s * 3 / 4 - 2, 2, 2);
-  g.generateTexture('explosion', s, s);
-}
-
-function generateCarTexture(scene) {
-  const g = scene.make.graphics({ add: false });
-  const w = CAR.w, h = CAR.h;
-
-  g.fillStyle(0x000000, 0.3);
-  g.fillRect(2, 2, w + 2, h + 2);
-  g.fillStyle(0x000000, 0.2);
-  g.fillRect(4, 4, w, h);
-
-  g.fillStyle(0x1a1a1a);
-  g.fillRect(0, 7, 7, 10);
-  g.fillRect(w - 7, 7, 7, 10);
-  g.fillRect(0, h - 17, 7, 10);
-  g.fillRect(w - 7, h - 17, 7, 10);
-
-  g.fillStyle(0x444444);
-  g.fillRect(1, 8, 5, 8);
-  g.fillRect(w - 6, 8, 5, 8);
-  g.fillRect(1, h - 16, 5, 8);
-  g.fillRect(w - 6, h - 16, 5, 8);
-
-  g.fillStyle(0xcccccc);
-  g.fillRect(6, 32, 20, 18);
-  g.fillRect(4, 14, 24, 20);
-  g.fillRect(7, 2, 18, 14);
-
-  g.fillStyle(0xffffff);
-  g.fillRect(5, 30, 22, 20);
-  g.fillRect(3, 12, 26, 20);
-  g.fillRect(6, 1, 20, 14);
-
-  g.fillStyle(0x5599cc);
-  g.fillRect(10, 10, 12, 10);
-  g.fillStyle(0x3377aa);
-  g.fillRect(10, 11, 12, 8);
-  g.fillStyle(0x5599cc);
-  g.fillRect(10, 34, 12, 8);
-  g.fillStyle(0x3377aa);
-  g.fillRect(10, 35, 12, 6);
-
-  g.fillStyle(0xffee88);
-  g.fillRect(6, 0, 6, 3);
-  g.fillRect(w - 12, 0, 6, 3);
-  g.fillStyle(0xffffcc);
-  g.fillRect(7, 0, 4, 2);
-  g.fillRect(w - 11, 0, 4, 2);
-
-  g.fillStyle(0xff3333);
-  g.fillRect(7, h - 3, 6, 3);
-  g.fillRect(w - 13, h - 3, 6, 3);
-  g.fillStyle(0xff5555);
-  g.fillRect(8, h - 3, 4, 2);
-  g.fillRect(w - 12, h - 3, 4, 2);
-
-  g.fillStyle(0x333333);
-  g.fillRect(15, 3, 2, 6);
-  g.fillRect(15, 28, 2, 8);
-  g.fillStyle(0xcc2222);
-  g.fillRect(4, 26, 4, 4);
-  g.fillRect(w - 8, 26, 4, 4);
-
-  g.generateTexture('car', w + 8, h + 8);
-}
-
-function makeTextTexture(scene, key, string, size, color) {
-  const c = document.createElement('canvas');
-  const ctx = c.getContext('2d');
-  c.width = 400;
-  c.height = 80;
-  ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(0, 0, c.width, c.height);
-  ctx.font = `bold ${size}px monospace`;
-  ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(string, c.width / 2, c.height / 2);
-  scene.textures.addCanvas(key, c);
-}
-
 class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: 'GameScene' });
@@ -487,28 +543,27 @@ class GameScene extends Phaser.Scene {
 
   create() {
     generateRoadTexture(this);
-    generateCarTexture(this);
-    generateBulletTexture(this);
-    generateEnemyTexture(this);
-    generateExplosionTexture(this);
-    generateEnemyBulletTexture(this);
-    generateRocketTexture(this);
+    generateCarTextures(this);
+    generateShotTextures(this);
+    generateExplosionTextures(this);
+    generateSceneryTextures(this);
     generateVanTextures(this);
-    makeTextTexture(this, 'go_title', 'GAME OVER', 36, '#ff3333');
-    makeTextTexture(this, 'go_hint', 'Press R to restart', 16, '#ffffff');
 
     this.road = this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'road');
     this.road.setOrigin(0, 0);
+    this.createScenery();
 
-    this.player = this.add.sprite(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'car');
+    // Above the bridge deck and the roadside, level with the traffic.
+    this.player = this.add.sprite(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'car').setDepth(4);
     this.player.setOrigin(0.5, 0.5);
 
     window.addEventListener('keydown', () => startAudio(this), { once: true });
     
     // Mute state and UI
     this.muted = false;
-    this.muteButton = this.add.text(GAME_WIDTH - 10, 50, 'MUTE', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', backgroundColor: '#222222', padding: { x: 6, y: 4 },
+    this.muteButton = this.add.text(GAME_WIDTH - 8, 38, 'MUTE', {
+      fontFamily: 'monospace', fontSize: '11px', fontStyle: 'bold', color: '#cfd6e0',
+      backgroundColor: '#1a1a1e', padding: { x: 5, y: 3 },
     }).setOrigin(1, 0).setDepth(10).setInteractive();
     this.muteButton.on('pointerdown', () => this.toggleMute());
     // M is the shell's, not ours - binding it here too toggled mute twice and
@@ -544,45 +599,33 @@ class GameScene extends Phaser.Scene {
     this.invulnUntil = 0;
     this.gameOver = false;
 
-    this.livesText = this.add.text(GAME_WIDTH - 10, 10, '', {
-      fontFamily: 'monospace', fontSize: '16px', color: '#ffffff',
-    }).setOrigin(1, 0).setDepth(10);
-    this.hpText = this.add.text(GAME_WIDTH - 10, 30, '', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#ff4444',
-    }).setOrigin(1, 0).setDepth(10);
+    // HUD: a dark bar across the top - score, lives as little cars, hearts.
+    this.add.rectangle(GAME_WIDTH / 2, 15, GAME_WIDTH, 30, 0x000000, 0.6).setDepth(9);
+    this.scoreText = this.add.text(10, 6, 'SCORE: 0', textStyle(15, '#ffe98a'))
+      .setOrigin(0, 0).setDepth(10);
+    this.lifeIcons = [];
+    for (let i = 0; i < PLAYER_LIVES; i++) {
+      this.lifeIcons.push(this.add.sprite(GAME_WIDTH - 14 - i * 18, 15, 'lifeIcon').setDepth(10));
+    }
+    this.hpText = this.add.text(GAME_WIDTH - 14 - PLAYER_LIVES * 18, 15, '', textStyle(14, '#ff5a5a'))
+      .setOrigin(1, 0.5).setDepth(10);
 
     this.score = 0;
-    this.weaponText = this.add.text(10, GAME_HEIGHT - 26, '', {
-      fontFamily: 'monospace', fontSize: '15px', color: '#ffcc44',
-    }).setOrigin(0, 0).setDepth(10);
 
-    this.vanHint = this.add.text(GAME_WIDTH / 2, 74, '', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#ffee99', align: 'center',
-    }).setOrigin(0.5).setDepth(10);
+    // Weapon panel, bottom left: icon, name, ammo. Hidden while unarmed.
+    this.weaponPanel = this.add.rectangle(122, GAME_HEIGHT - 24, 228, 32, 0x000000, 0.65)
+      .setStrokeStyle(1, 0xffcc44).setDepth(9);
+    this.weaponIcon = this.add.sprite(26, GAME_HEIGHT - 24, 'oil').setDepth(10);
+    this.weaponText = this.add.text(48, GAME_HEIGHT - 24, '', textStyle(13, '#ffcc44'))
+      .setOrigin(0, 0.5).setDepth(10);
 
-    this.scoreText = this.add.text(10, 10, 'SCORE: 0', {
-      fontFamily: 'monospace', fontSize: '16px', color: '#ffff88',
-    }).setOrigin(0, 0).setDepth(10);
+    this.vanHint = this.add.text(GAME_WIDTH / 2, 64, '', textStyle(14, '#ffe98a'))
+      .setOrigin(0.5).setDepth(10);
 
     this.updateHUD();
 
     this.started = false;
-    this.startOverlay = this.add.rectangle(
-      GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75
-    ).setDepth(20);
-    this.startTitle = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40, 'FAKE SPY HUNTER', {
-      fontFamily: 'monospace', fontSize: '32px', color: '#ffffff', align: 'center',
-    }).setOrigin(0.5).setDepth(21);
-    this.startHint = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20, 'PRESS SPACE TO START', {
-      fontFamily: 'monospace', fontSize: '18px', color: '#ffdd55', align: 'center',
-    }).setOrigin(0.5).setDepth(21);
-
-    this.startHighText = this.add.text(
-      GAME_WIDTH / 2,
-      GAME_HEIGHT / 2 + 60,
-      Arcade.Scores.format(GAME_KEY),
-      { fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', align: 'center' }
-    ).setOrigin(0.5).setDepth(21);
+    this.buildTitleScreen();
 
     // Start and restart are polled in update() from the shared input.
 
@@ -611,11 +654,49 @@ class GameScene extends Phaser.Scene {
     });
   }
 
+  buildTitleScreen() {
+    const mid = GAME_WIDTH / 2;
+    const top = GAME_HEIGHT / 2;
+    this.startOverlay = this.add.rectangle(mid, top, GAME_WIDTH, GAME_HEIGHT, 0x05070c, 0.82).setDepth(20);
+    this.startTitle = this.add.text(mid, top - 150, 'FAKE SPY HUNTER', textStyle(34, '#ffffff'))
+      .setOrigin(0.5).setDepth(21);
+    this.startHint = this.add.text(mid, top - 100, 'PRESS SPACE TO START', textStyle(17, '#ffdd55'))
+      .setOrigin(0.5).setDepth(21);
+    this.startHighText = this.add.text(mid, top - 70, Arcade.Scores.format(GAME_KEY), textStyle(13, '#ffffff'))
+      .setOrigin(0.5, 0).setDepth(21);
+
+    // The weapons van's stock, with the real sprites.
+    this.startParts = [
+      this.add.sprite(mid, top - 230, 'car').setScale(2).setDepth(21),
+      this.add.text(mid, top + 60, 'THE WEAPONS VAN CARRIES', textStyle(13, '#9ad0ff')).setOrigin(0.5).setDepth(21),
+    ];
+    [
+      ['oil', 0.6, 'OIL SLICK', 'SPINS OUT CARS BEHIND'],
+      ['smoke', 0.55, 'SMOKE SCREEN', 'BLOCKS INCOMING FIRE'],
+      ['missile', 1.2, 'MISSILES', 'PUNCH THROUGH TRAFFIC'],
+    ].forEach(([key, scale, name, what], i) => {
+      const y = top + 96 + i * 36;
+      this.startParts.push(
+        this.add.sprite(mid - 150, y, key).setScale(scale).setDepth(21),
+        this.add.text(mid - 118, y - 7, name, textStyle(13, '#ffcc44')).setOrigin(0, 0.5).setDepth(21),
+        this.add.text(mid - 118, y + 8, what, textStyle(11, '#cfd6e0')).setOrigin(0, 0.5).setDepth(21)
+      );
+    });
+    this.startParts.push(
+      this.add.text(
+        mid, top + 222,
+        'ARROWS DRIVE  ·  SPACE FIRE  ·  SHIFT WEAPON\nDRIVE INTO THE BACK OF THE VAN TO ARM UP\n\nP PAUSE  ·  M MUTE  ·  ESC ARCADE',
+        textStyle(11, '#9ad07a')
+      ).setOrigin(0.5, 0).setDepth(21)
+    );
+  }
+
   startGame() {
     this.started = true;
     this.startOverlay.destroy();
     this.startTitle.destroy();
     this.startHint.destroy();
+    for (const part of this.startParts) part.destroy();
     if (this.startHighText) this.startHighText.destroy();
     startAudio(this);
   }
@@ -667,6 +748,7 @@ class GameScene extends Phaser.Scene {
     // Inside the van the car is gone and the controls are dead.
     if (this.playerState === 'boarding') {
       this.road.tilePositionY -= ROAD_SPEED * dt;
+      this.scrollScenery(dt);
       this.boardTimer -= delta;
       if (this.boardTimer <= 0) this.finishBoarding();
       return;
@@ -695,6 +777,7 @@ class GameScene extends Phaser.Scene {
     );
 
     this.road.tilePositionY -= ROAD_SPEED * dt;
+    this.scrollScenery(dt);
     this.player.x = this.carX;
     this.player.y = this.carY;
 
@@ -804,6 +887,53 @@ class GameScene extends Phaser.Scene {
           break;
         }
       }
+    }
+  }
+
+  /* ---------------------------------------------------------- scenery --- */
+
+  /** Fills both verges and parks a river bridge up the road. */
+  createScenery() {
+    this.scenery = [];
+    for (const side of [-1, 1]) {
+      let y = GAME_HEIGHT - 40;
+      for (let i = 0; i < SCENERY_PER_SIDE; i++) {
+        const item = { side, y };
+        dressSceneryItem(item);
+        item.sprite = this.add.sprite(item.x, item.y, item.kind).setDepth(2);
+        this.scenery.push(item);
+        y -= 60 + Math.random() * 70;
+      }
+    }
+    this.bridge = {
+      kind: 'bridge', side: 0, x: GAME_WIDTH / 2, halfWidth: GAME_WIDTH / 2,
+      y: -BRIDGE.h / 2 - (BRIDGE.gapMin + Math.random() * (BRIDGE.gapMax - BRIDGE.gapMin)),
+    };
+    this.bridge.sprite = this.add.sprite(this.bridge.x, this.bridge.y, 'bridge').setDepth(1);
+    this.scenery.push(this.bridge);
+  }
+
+  /** Moves the roadside with the road and recycles what falls off the bottom. */
+  scrollScenery(dt) {
+    for (const item of this.scenery) {
+      item.y += ROAD_SPEED * dt;
+
+      if (item === this.bridge) {
+        if (item.y - BRIDGE.h / 2 > GAME_HEIGHT) {
+          item.y = -BRIDGE.h / 2 - (BRIDGE.gapMin + Math.random() * (BRIDGE.gapMax - BRIDGE.gapMin));
+        }
+      } else if (item.y - 40 > GAME_HEIGHT) {
+        // Back up the road, above the highest piece on the same side.
+        const top = Math.min(...this.scenery.filter((o) => o.side === item.side).map((o) => o.y));
+        item.y = top - (60 + Math.random() * 70);
+        dressSceneryItem(item);
+        item.sprite.setTexture(item.kind);
+
+        // Nothing grows in the river.
+        const b = this.bridge;
+        if (Math.abs(item.y - b.y) < BRIDGE.h / 2 + 40) item.y = b.y - BRIDGE.h / 2 - 40 - Math.random() * 30;
+      }
+      item.sprite.setPosition(item.x, item.y);
     }
   }
 
@@ -1026,7 +1156,10 @@ class GameScene extends Phaser.Scene {
       ? ENEMY.minSpeed + Math.random() * (ENEMY.maxSpeed - ENEMY.minSpeed)
       : -(ENEMY.minSpeed + Math.random() * (ENEMY.maxSpeed - ENEMY.minSpeed));
 
-    const e = this.add.sprite(x, y, 'enemy');
+    // The look is paint only: speed and firing below do not read it.
+    const look = ENEMY_LOOKS[Math.floor(Math.random() * ENEMY_LOOKS.length)];
+    const e = this.add.sprite(x, y, look);
+    e.look = look;
     e.setOrigin(0.5, 0.5);
     e.setData('vY', vY);
     e.setData('lastFire', 0);
@@ -1052,6 +1185,7 @@ class GameScene extends Phaser.Scene {
     eb.setData('vX', vx);
     eb.setData('vY', vy);
     eb.setData('damage', isRocket ? 2 : 1);
+    if (isRocket) eb.setFlipY(vy > 0);
     eb.setDepth(5);
     this.enemyBullets.add(eb);
     playSfx(isRocket ? 'enemyRocket' : 'enemyShoot');
@@ -1099,13 +1233,16 @@ class GameScene extends Phaser.Scene {
     this.player.setVisible(false);
     music.stop();
 
-    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.75).setDepth(100);
-    this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, 'go_title').setDepth(101);
-    this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 40, 'go_hint').setDepth(101);
+    const mid = GAME_WIDTH / 2;
+    this.add.rectangle(mid, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.6).setDepth(100);
+    this.add.rectangle(mid, GAME_HEIGHT / 2 + 30, 340, 290, 0x05070c, 0.92)
+      .setStrokeStyle(2, 0xff4444).setDepth(100);
+    this.add.text(mid, GAME_HEIGHT / 2 - 80, 'GAME OVER', textStyle(36, '#ff4444')).setOrigin(0.5).setDepth(101);
+    this.add.text(mid, GAME_HEIGHT / 2 - 38, 'SCORE ' + this.score, textStyle(18, '#ffffff')).setOrigin(0.5).setDepth(101);
+    this.add.text(mid, GAME_HEIGHT / 2 - 10, 'PRESS R TO RESTART', textStyle(14, '#9ad07a')).setOrigin(0.5).setDepth(101);
 
-    const table = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 90, '', {
-      fontFamily: 'monospace', fontSize: '16px', color: '#ffffff', align: 'center',
-    }).setOrigin(0.5, 0).setDepth(101);
+    const table = this.add.text(mid, GAME_HEIGHT / 2 + 20, '', textStyle(14, '#ffe98a'))
+      .setOrigin(0.5, 0).setDepth(101);
 
     const showTable = () => table.setText(Arcade.Scores.format(GAME_KEY));
 
@@ -1119,7 +1256,7 @@ class GameScene extends Phaser.Scene {
 
   }
   updateHUD() {
-    this.livesText.setText(`LIVES: ${this.playerLives}`);
+    this.lifeIcons.forEach((icon, i) => icon.setVisible(i < this.playerLives));
     const hpBar = '♥'.repeat(this.playerHP) + '♡'.repeat(PLAYER_MAX_HP - this.playerHP);
     this.hpText.setText(hpBar);
     if (this.scoreText) this.scoreText.setText(`SCORE: ${this.score || 0}`);
@@ -1127,20 +1264,31 @@ class GameScene extends Phaser.Scene {
       this.weaponText.setText(
         this.weapon ? `${WEAPONS[this.weapon].name} x${this.weaponAmmo}  [SHIFT]` : ''
       );
+      const armed = !!this.weapon;
+      this.weaponPanel.setVisible(armed);
+      this.weaponIcon.setVisible(armed);
+      if (armed) {
+        this.weaponIcon.setTexture(this.weapon).setScale(this.weapon === 'missile' ? 0.9 : 0.45);
+      }
     }
   }
 
   explodeAt(x, y) {
-    const ex = this.add.sprite(x, y, 'explosion');
-    ex.setDepth(10);
-    ex.setScale(0.5);
-    ex.setAlpha(0.9);
+    const fire = this.add.sprite(x, y, 'explosion').setDepth(10).setScale(0.4);
     this.tweens.add({
-      targets: ex,
-      scale: 1.5, alpha: 0,
-      duration: 350,
-      onComplete: () => ex.destroy(),
+      targets: fire, scale: 1.7, alpha: 0, duration: 420,
+      onComplete: () => fire.destroy(),
     });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.random() * 0.5;
+      const d = 26 + Math.random() * 24;
+      const bit = this.add.sprite(x, y, 'debris').setDepth(10).setScale(1.5);
+      this.tweens.add({
+        targets: bit, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d,
+        angle: Math.random() < 0.5 ? -360 : 360, alpha: 0, duration: 520,
+        onComplete: () => bit.destroy(),
+      });
+    }
   }
 }
 
